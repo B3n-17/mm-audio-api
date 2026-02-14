@@ -62,7 +62,7 @@ RECOMP_PATCH void AudioLoad_Init(void* heap, size_t heapSize) {
 
     // Set all of gAudioCtx to 0
     audioCtxPtr = (u8*)&gAudioCtx;
-    for (j = sizeof(gAudioCtx); j > 0; j--) {
+    for (j = sizeof(gAudioCtx); j >= 0; j--) {
         *audioCtxPtr++ = 0;
     }
 
