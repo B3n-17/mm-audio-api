@@ -38,6 +38,8 @@
 #define SEQ_RESUME_POINT_NONE 0xC0
 #define AMBIENCE_CHANNEL_PROPERTIES_ENTRIES_MAX 33
 
+#define NB_BGM_MORNING 128
+
 typedef enum {
     /* 0x0 */ SEQ_PLAYER_IO_PORT_0,
     /* 0x1 */ SEQ_PLAYER_IO_PORT_1,
@@ -108,6 +110,7 @@ extern void Audio_SetSequenceProperties(u8 seqPlayerIndex, Vec3f* projectedPos, 
 
 void AudioApi_PlaySequenceWithSeqPlayerIO(s8 seqPlayerIndex, s32 seqId, u16 seqArgs,
                                           u8 fadeInDuration, s8 ioPort, u8 ioData);
+void AudioApi_PlayFanfare(s32 seqId, u16 seqArgs);
 
 
 SeqRequestExtended sExtSeqRequests[SEQ_PLAYER_MAX][5];
@@ -142,6 +145,18 @@ RECOMP_EXPORT void AudioApi_SetRadioEffectInShops(u8 enabled) {
 
 RECOMP_EXPORT u8 AudioApi_GetRadioEffectInShops(void) {
     return sRadioEffectInShops;
+}
+
+// ======== CUSTOM SEQUENCE IDS ========
+
+extern AudioTable* AudioLoad_GetLoadTable(s32 tableType);
+
+static bool AudioApi_IsSequenceRegistered(s32 seqId) {
+    AudioTable* table = AudioLoad_GetLoadTable(SEQUENCE_TABLE);
+    if (seqId < 0 || (u32)seqId >= (u32)table->header.numEntries) {
+        return false;
+    }
+    return table->entries[seqId].romAddr != 0;
 }
 
 RECOMP_DECLARE_EVENT(AudioApi_SequenceStarted(s8 seqPlayerIndex, s32 seqId, u16 seqArgs, u16 fadeInDuration));
@@ -675,8 +690,18 @@ RECOMP_PATCH void Audio_StartSceneSequence(u16 seqId) {
 RECOMP_EXPORT void AudioApi_StartMorningSceneSequence(s32 seqId, u16 seqArgs) {
     if (seqId != NA_BGM_AMBIENCE) {
         SEQCMD_STOP_SEQUENCE(SEQ_PLAYER_AMBIENCE, 0);
-        AudioApi_StartSceneSequence(seqId, seqArgs);
-        AudioApi_PlaySequenceWithSeqPlayerIO(SEQ_PLAYER_BGM_MAIN, seqId, seqArgs, 0, 0, 1);
+
+        if (AudioApi_IsSequenceRegistered(NB_BGM_MORNING)) {
+            // A mod has registered a morning jingle.
+            // Play the jingle on the fanfare player, then start the scene BGM after it finishes.
+            AudioApi_StartSequence(SEQ_PLAYER_FANFARE, NB_BGM_MORNING, 0, 0);
+            SEQCMD_EXTENDED_SETUP_PLAY_SEQUENCE(SEQ_PLAYER_FANFARE, SEQ_PLAYER_BGM_MAIN, seqArgs, seqId);
+            sExtPrevSceneSeqId = seqId;
+        } else {
+            // No custom morning jingle, use vanilla behavior (IO port 0 = 1)
+            AudioApi_StartSceneSequence(seqId, seqArgs);
+            AudioApi_PlaySequenceWithSeqPlayerIO(SEQ_PLAYER_BGM_MAIN, seqId, seqArgs, 0, 0, 1);
+        }
     } else {
         Audio_PlayAmbience(AMBIENCE_ID_08);
     }

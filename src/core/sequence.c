@@ -173,7 +173,13 @@ RECOMP_EXPORT void AudioApi_ReplaceSequenceFont(s32 seqId, s32 fontNum, s32 font
     u8* entry = &gAudioCtx.sequenceFontTable[index];
     u8 numFonts = entry[0];
 
-    if (fontNum >= numFonts || fontNum < 0) {
+    if (fontNum < 0) {
+        return;
+    }
+
+    if (fontNum >= numFonts) {
+        // Target has fewer fonts than expected, add the font instead
+        AudioApi_AddSequenceFont(seqId, fontId);
         return;
     }
 

@@ -228,7 +228,7 @@ void AudioApi_ProcessSeqCmd(RecompQueueCmd* cmd) {
             if (found < ARRAY_COUNT(gExtActiveSeqs[seqPlayerIndex].setupCmd)) {
                 if (subOp == SEQCMD_SUB_OP_SETUP_PLAY_SEQ) {
                     gExtActiveSeqs[seqPlayerIndex].setupCmd[found] =
-                        (RecompQueueCmd){ subOp, cmd->arg0, seqPlayerIndex, (void**)&seqId };
+                        (RecompQueueCmd){ subOp, cmd->arg0, seqPlayerIndex, (void**)(intptr_t)seqId };
                 } else {
                     gExtActiveSeqs[seqPlayerIndex].setupCmd[found] =
                         (RecompQueueCmd){ subOp, cmd->arg0, seqPlayerIndex, 0 };
