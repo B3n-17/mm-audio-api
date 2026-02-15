@@ -7,40 +7,78 @@
 #include <core/load.h>
 
 /**
- * This file adds full support for playing PCM-16 (PCM signed 16-bit big-endian) files. Some support
- * for this codec is present in the vanilla ROM, but the code is incomplete.
+ * @file synthesis.c
+ * @brief RSP audio command list builder. Patches vanilla AudioSynth to support 48kHz output
+ *        and CODEC_S16 (PCM signed 16-bit big-endian) sample playback.
  *
- * You can encode your files for PCM-16 using either Audacity or ffmpeg.
+ * == What This File Does ==
+ * Patches three vanilla functions (AudioSynth_Update, AudioSynth_ProcessSamples,
+ * AudioSynth_ProcessSample, AudioSynth_LoadFilterSize) to:
+ *   1. Run audio at 48kHz instead of 32kHz (FREQ_FACTOR=1.5, NUM_SUB_UPDATES=2)
+ *   2. Add full CODEC_S16 decoding (vanilla had incomplete stub)
+ *   3. Handle mod memory (RSP can't DMA from mod addresses) via AudioApi_RspCacheMemcpy()
  *
- * Audacity
- * ========
- * When exporting, first select "Other uncompressed files". Then select these options:
- *   Mono, 32000 Hz, "RAW (header-less)", and "Signed 16-bit PCM"
+ * == 48kHz Upsampling Strategy ==
+ * The N64 audio engine ties sequence timing to update count. At 32kHz: 3 updates/frame.
+ * Naively running at 48kHz would give 4 updates/frame, breaking sequence tempo.
+ * Solution: Keep 3 sequence updates/frame, but split each into NUM_SUB_UPDATES=2 RSP passes
+ * (6 total). Sequence scripts run at original rate; only RSP sample processing is subdivided.
+ *   - AudioSynth_Update: Runs AudioScript_ProcessSequences 3x (original rate), then
+ *     processes 6 RSP sub-updates with sample counts scaled by FREQ_FACTOR.
+ *   - AudioSynth_ProcessSamples: Divides updateIndex by NUM_SUB_UPDATES for sampleStateList
+ *     offset, since sample states are synced per sequence update, not per RSP sub-update.
  *
- * Export the file with a name such as "my-sample.raw" and then use GNU binutils to byte-swap:
- *   objcopy -I binary -O binary --reverse-bytes=2 path/to/my-sample.raw
+ * == RSP Audio Pipeline (per sub-update) ==
+ * For each active note, AudioSynth_ProcessSample builds RSP commands:
+ *   1. Decode: Compressed sample -> PCM in DMEM_UNCOMPRESSED_NOTE
+ *      (ADPCM/SmallADPCM/S8/S16/Reverb/Wave depending on codec)
+ *   2. Resample: Pitch-shift mono signal via AudioSynth_FinalResample -> DMEM_TEMP
+ *   3. Gain: Volume adjust (UQ4.4, 0x10 = unity)
+ *   4. Filter: Optional IIR filter
+ *   5. Comb filter: Temporal self-mixing for chorus/flange effects
+ *   6. Surround: Halve L/R volumes, apply surround effect if SOUNDMODE_SURROUND
+ *   7. Envelope: Split mono -> stereo dry (DMEM_LEFT/RIGHT_CH) + wet (reverb bus)
+ *   8. Haas effect: Delay L or R channel for stereo widening
+ * After all notes: interleave L/R, run custom synth hook, save to AI buffer.
  *
- * ffmpeg
- * ======
- * Use a command similar to this:
- *   ffmpeg -i input.wav -acodec pcm_s16be -f s16be -ac 1 -ar 32000 my-sample.raw
+ * == DMEM Layout ==
+ * See #defines below. Key regions: DMEM_UNCOMPRESSED_NOTE (decoded samples),
+ * DMEM_TEMP (resampled mono), DMEM_LEFT/RIGHT_CH (stereo dry mix),
+ * DMEM_WET_LEFT/RIGHT_CH (reverb wet mix), DMEM_COMPRESSED_ADPCM_DATA (raw compressed input).
  *
+ * == Mod Memory Workaround ==
+ * RSP can only DMA from N64 address space (KSEG0). Mod-loaded data (codebooks, loop predictors,
+ * filters) lives in host memory. IS_MOD_MEMORY() detects this; AudioApi_RspCacheMemcpy() copies
+ * data into audio heap where RSP can read it. Applied to: ADPCM codebooks, loop predictor
+ * states, and filter coefficients.
+ *
+ * == CODEC_S16 Support ==
+ * Vanilla had CODEC_S16 as a stub. This patch loads PCM16-BE samples directly via DMA
+ * (or DMA callback for streamed audio), writing uncompressed to DMEM_UNCOMPRESSED_NOTE.
+ * Loads numSamplesToProcess + 16 extra samples to prevent resampler crackling at boundaries.
+ * Supports both ROM-based and DMA-callback-based (IS_DMA_CALLBACK_DEV_ADDR) sample sources.
+ *
+ * == PCM-16 Encoding (for content creators) ==
+ * Audacity: Export as "Other uncompressed files", Mono 32000Hz, RAW header-less, Signed 16-bit PCM.
+ *   Then byte-swap: objcopy -I binary -O binary --reverse-bytes=2 my-sample.raw
+ * ffmpeg: ffmpeg -i input.wav -acodec pcm_s16be -f s16be -ac 1 -ar 32000 my-sample.raw
  */
 
-// DMEM Addresses for the RSP
-#define DMEM_TEMP 0x3B0
+/* RSP DMEM address map (4KB total). Pipeline: decode->UNCOMPRESSED_NOTE, resample->TEMP,
+ * envelope splits mono->LEFT/RIGHT_CH (dry) + WET_LEFT/RIGHT_CH (reverb). */
+#define DMEM_TEMP 0x3B0                  // Resampled mono signal; also scratch for 2-part interleave
 #define DMEM_TEMP2 0x3C0
-#define DMEM_SURROUND_TEMP 0x4B0
-#define DMEM_UNCOMPRESSED_NOTE 0x570
-#define DMEM_HAAS_TEMP 0x5B0
-#define DMEM_COMB_TEMP 0x750             // = DMEM_TEMP + DMEM_2CH_SIZE + a bit more
-#define DMEM_COMPRESSED_ADPCM_DATA 0x930 // = DMEM_LEFT_CH
-#define DMEM_LEFT_CH 0x930
-#define DMEM_RIGHT_CH 0xAD0
-#define DMEM_WET_TEMP 0x3D0
-#define DMEM_WET_SCRATCH 0x710 // = DMEM_WET_TEMP + DMEM_2CH_SIZE
-#define DMEM_WET_LEFT_CH 0xC70
-#define DMEM_WET_RIGHT_CH 0xE10 // = DMEM_WET_LEFT_CH + DMEM_1CH_SIZE
+#define DMEM_SURROUND_TEMP 0x4B0         // Surround effect working buffer
+#define DMEM_UNCOMPRESSED_NOTE 0x570     // Decoded PCM samples before resampling
+#define DMEM_HAAS_TEMP 0x5B0             // Haas delay line scratch
+#define DMEM_COMB_TEMP 0x750             // Comb filter scratch (= DMEM_TEMP + DMEM_2CH_SIZE + extra)
+#define DMEM_COMPRESSED_ADPCM_DATA 0x930 // Raw compressed ADPCM loaded here (= DMEM_LEFT_CH)
+#define DMEM_LEFT_CH 0x930               // Stereo dry left output accumulator
+#define DMEM_RIGHT_CH 0xAD0              // Stereo dry right output accumulator
+#define DMEM_WET_TEMP 0x3D0              // Wet channel scratch
+#define DMEM_WET_SCRATCH 0x710           // = DMEM_WET_TEMP + DMEM_2CH_SIZE
+#define DMEM_WET_LEFT_CH 0xC70           // Reverb wet left accumulator
+#define DMEM_WET_RIGHT_CH 0xE10          // Reverb wet right (= WET_LEFT + DMEM_1CH_SIZE)
 
 typedef enum {
     /* 0 */ HAAS_EFFECT_DELAY_NONE,
@@ -85,6 +123,10 @@ void AudioSynth_DMemMove(Acmd* cmd, s32 dmemIn, s32 dmemOut, size_t size);
 void AudioSynth_SaveBuffer(Acmd* cmd, s32 dmemSrc, s32 size, void* addrDest);
 void AudioSynth_LoadFilterSize(Acmd* cmd, size_t size, s16* addr);
 
+/* @mod Top-level RSP command builder. Called once per audio frame.
+ * Key mod change: Sequence scripts still update 3x/frame (vanilla rate), but RSP processing runs
+ * 3*NUM_SUB_UPDATES=6 sub-updates/frame. Sample counts are computed at 32kHz then scaled by
+ * FREQ_FACTOR=1.5 to produce 48kHz output. This preserves sequence tempo while increasing output rate. */
 RECOMP_PATCH Acmd* AudioSynth_Update(Acmd* abiCmdStart, s32* numAbiCmds, s16* aiBufStart, s32 numSamplesPerFrame) {
     s32 numSamplesPerUpdate;
     s16* curAiBufPos;
@@ -93,21 +135,6 @@ RECOMP_PATCH Acmd* AudioSynth_Update(Acmd* abiCmdStart, s32* numAbiCmds, s16* ai
     s32 reverseUpdateIndex;
     s32 reverbIndex;
     SynthesisReverb* reverb;
-
-    // @mod Zelda 64's audio engine is intrinsically linked to the output rate in a way that changes
-    // the result if the output rate is increased to 48kHz. The main reason is that the game limits
-    // the number of samples process per update to around 200 samples per update. This is necessary
-    // since DMEM is limited. For each update, a call to the AudioScript_ProcessSequences() function
-    // is made. At 32kHz the game will run three updates per frame, and at 48kHz it will run four.
-    // This causes problems because many of counters in the sequence script are not scaled with the
-    // increased output rate. For example, `delay 12` would finish in four frames at 32kHz, but only
-    // three frames at 48kHz. The solution is that we must still update the sequence player three
-    // times per frame, but then process each update in two parts. This means that there will be six
-    // updates per frame. This means more RSP commands, which may have been a problem on original
-    // hardware, but shouldn't cause any issues on modern machines.
-    //
-    // Additionally, the number of samples process per frame must be carefully calculated to be as
-    // close to the original 32kHz numbers as possible, then scaled up after the calculation is done.
 
     for (reverseUpdateIndex = gAudioCtx.audioBufferParameters.updatesPerFrame; reverseUpdateIndex > 0;
          reverseUpdateIndex--) {
@@ -169,10 +196,10 @@ RECOMP_PATCH Acmd* AudioSynth_Update(Acmd* abiCmdStart, s32* numAbiCmds, s16* ai
     return curCmd;
 }
 
-/**
- * Process all samples embedded in a note. Every sample has numSamplesPerUpdate processed,
- * and each of those are mixed together into both DMEM_LEFT_CH and DMEM_RIGHT_CH
- */
+/* Mixes all active notes for one sub-update into DMEM_LEFT/RIGHT_CH, processes reverb buses,
+ * interleaves stereo, runs custom synth hook, and saves to AI buffer.
+ * @mod: sampleStateOffset divides updateIndex by NUM_SUB_UPDATES since sample states are synced
+ * per sequence update (3/frame), not per RSP sub-update (6/frame). */
 RECOMP_PATCH Acmd* AudioSynth_ProcessSamples(s16* aiBuf, s32 numSamplesPerUpdate, Acmd* cmd, s32 updateIndex) {
     s32 size;
     u8 noteIndices[0x58];
@@ -300,6 +327,11 @@ RECOMP_PATCH Acmd* AudioSynth_ProcessSamples(s16* aiBuf, s32 numSamplesPerUpdate
     return cmd;
 }
 
+/* Builds RSP commands for a single note's sample. Full pipeline per note:
+ * decode (codec-specific) -> resample (pitch) -> gain -> filter -> comb -> surround ->
+ * envelope (mono->stereo L/R dry+wet) -> haas (stereo widening).
+ * @mod: Adds CODEC_S16 decode path, mod memory workarounds for codebooks/loops/filters.
+ * optnone: required to prevent compiler from reordering/eliminating matching-critical code. */
 __attribute__((optnone))
 RECOMP_PATCH Acmd* AudioSynth_ProcessSample(s32 noteIndex, NoteSampleState* sampleState,
                                             NoteSynthesisState* synthState, s16* aiBuf,
@@ -564,10 +596,8 @@ RECOMP_PATCH Acmd* AudioSynth_ProcessSample(s32 noteIndex, NoteSampleState* samp
                         goto skip;
 
                     case CODEC_S16:
-                        // @mod add support for PCM 16
-                        // Note that despite being able to load the exact number of samples requested,
-                        // we load an extra 16 samples in order to prevent audio crackling.
-                        // These extra samples overlap the samples requested in the next update.
+                        // @mod PCM16-BE: No decompression needed, DMA directly into DMEM.
+                        // Extra SAMPLES_PER_FRAME loaded to prevent resampler crackling at boundaries.
                         numSamplesToDecode = MIN(numSamplesToProcess + SAMPLES_PER_FRAME, numSamplesUntilEnd);
 
                         AudioSynth_ClearBuffer(cmd++, DMEM_UNCOMPRESSED_NOTE + dmemUncompressedAddrOffset1,
@@ -865,8 +895,8 @@ RECOMP_PATCH Acmd* AudioSynth_ProcessSample(s32 noteIndex, NoteSampleState* samp
     return cmd;
 }
 
+/* @mod Patches filter load to copy mod-memory filter coefficients into RSP-accessible heap. */
 RECOMP_PATCH void AudioSynth_LoadFilterSize(Acmd* cmd, size_t size, s16* addr) {
-    // @mod RSP can't read from mod memory, so move filter into audio heap
     if (IS_MOD_MEMORY(addr)) {
         addr = AudioApi_RspCacheMemcpy(addr, size);
     }

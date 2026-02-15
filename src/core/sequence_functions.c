@@ -7,21 +7,61 @@
 #include <recomp/recompconfig.h>
 
 /**
- * This file patches various functions found in sequence.c and code_8019AF00.c in order to support
- * more than 256 sequences, as well as provide new exported functions for the same purpose.
+ * sequence_functions.c — Extended Sequence Management (patches sequence.c + code_8019AF00.c)
  *
- * The main issue is that sequence IDs are either stored as u8, or u16. In the latter case, this is
- * actually `(seqArgs << 8) | seqId`, which means we are still limited to 8 bits for the seqId.
+ * PURPOSE: High-level sequence management with >256 seqId support.
+ * Vanilla MM packs seqId (u8) + seqArgs (u8) into a single u16: `(seqArgs << 8) | seqId`.
+ * This file splits them into separate params: s32 seqId + u16 seqArgs, removing the 8-bit limit.
  *
- * All of the newly exported functions have seqId and seqArgs as separate parameters, otherwise the
- * function signature should be the same as the vanilla functions, which have been patched to use
- * the newly defined functions. These vanilla functions will continue to work with seqId being the
- * bits for seqId and seqArgs combined.
+ * PATTERN: Every vanilla function has a paired extended version:
+ *   Audio_Foo(u16 seqId)         → RECOMP_PATCH: unpacks seqId & 0xFF / seqId & 0xFF00, calls:
+ *   AudioApi_Foo(s32 seqId, u16 seqArgs) → RECOMP_EXPORT: the real implementation
+ *   Vanilla callers work unchanged; mod callers use AudioApi_* with full s32 seqId range.
  *
- * One important note is that using `AudioSeq_GetActiveSeqId()` when a custom sequence is playing
- * will return the value 0xFE. This represents a sequence unknown to the vanilla game, since we
- * cannot return the actual value from this function. Instead, you should use the following calls:
- * `AudioApi_GetActiveSeqId()` and `AudioApi_GetActiveSeqArgs()`.
+ * COMPATIBILITY: AudioSeq_GetActiveSeqId() returns NA_BGM_UNKNOWN (0xFE) when a custom seq
+ * (seqId >= 256) is playing. Mod code should use AudioApi_GetActiveSeqId/Args() instead.
+ *
+ * STATE (parallel to vanilla gActiveSeqs[]):
+ *   gExtActiveSeqs[SEQ_PLAYER_MAX] — ActiveSequenceExtended: seqId (s32), seqArgs, prevSeqId,
+ *     prevSeqArgs, setupCmd queue, async load cmd
+ *   sExtSeqFlags = sSeqFlags       — per-sequence flag array (SEQ_FLAG_ENEMY, _FANFARE, etc.)
+ *   sExt*SeqId / sExt*SeqArgs      — shadow copies of various vanilla static seqId/args vars
+ *
+ * SECTIONS (in order):
+ *   [Config]         sRadioEffectInShops — cached config for vanilla radio band-pass filter in shops
+ *   [Custom SeqIds]  AudioApi_IsSequenceRegistered — checks if seqId has a valid table entry
+ *   [Start/Stop/Get] AudioApi_StartSequence, StopSequence, GetActiveSeqId/Args, IsSequencePlaying
+ *     StartSequence: converts fadeInDuration to ticks, sends AUDIOCMD, fires SequenceStarted event
+ *     seqArgs 0x7F = special "skip ticks" mode (fadeInDuration in seconds → skip ahead)
+ *   [ObjSound]       Spatial BGM that plays from world-space positions (shops, observatory, etc.)
+ *     AudioApi_PlayObjSoundBgm — main positional BGM (milk bar, shops); uses radio effect setting
+ *     AudioApi_PlayObjSoundFanfare — positional fanfare; picks closest by weighted screen distance
+ *     AudioApi_StartObjSoundFanfare — handles final hours / soaring edge cases
+ *   [SubBgm]         Secondary BGM layer (enemy BGM, spatial BGM like guru guru's song of storms)
+ *     AudioApi_PlaySubBgm — starts sub BGM, ducks main BGM, sets up restore on finish
+ *     AudioApi_StartSubBgmAtPos — spatial sub BGM with distance-based volume + main BGM ducking
+ *     AudioApi_PlaySubBgmAtPos/WithFilter — queues spatial sub BGM for next update tick
+ *   [SeqAtPos]       Sequence at position (minifrog, etc.) — sets up for Audio_UpdateSequenceAtPos
+ *   [Scene+Cutscene]  Scene BGM lifecycle:
+ *     AudioApi_StartSceneSequence — handles resume points (IO port 7) + harp intro skip
+ *     AudioApi_StartMorningSceneSequence — morning jingle support (NB_BGM_MORNING = seq 128)
+ *     AudioApi_PlaySceneSequence — dedup + final hours guard, delegates to StartSceneSequence
+ *     AudioApi_PlaySequenceInCutscene — routes to correct player by seq flags (fanfare/sub/main)
+ *   [Fanfare]        AudioApi_PlayFanfare + Audio_UpdateFanfare — fanfare with font preload logic
+ *   [Misc]           SetSequenceMode (enemy BGM toggle, OoT field remnant), SetExtraFilter,
+ *                    SetAmbienceChannelIO, PlayAmbience, UpdateEnemyBgmVolume
+ *   [Reset]          AudioSeq_ResetActiveSequences, Audio_ResetRequestedSceneSeqId
+ *   [Hooks]          RECOMP_HOOK on Audio_ResetData, Audio_ResetForAudioHeapStep3,
+ *                    AudioSeq_UpdateActiveSequences (pre+post hooks for setup cmd processing)
+ *
+ * SEQ_FLAG bits (per-sequence metadata in sSeqFlags[]):
+ *   0x01=ENEMY  0x02=FANFARE  0x04=FANFARE_KAMARO  0x08=RESTORE
+ *   0x10=RESUME  0x20=RESUME_PREV  0x40=SKIP_HARP_INTRO  0x80=NO_AMBIENCE
+ *
+ * KEY MACROS:
+ *   SEQCMD_EXTENDED_PLAY_SEQUENCE — like SEQCMD_PLAY_SEQUENCE but takes s32 seqId
+ *   AUDIOCMD_EXTENDED_GLOBAL_INIT_SEQPLAYER — audio thread cmd with s32 seqId
+ *   SEQ_SCREEN_WEIGHTED_DIST — weighted 3D distance for spatial audio priority
  */
 
 #define SEQ_SCREEN_WEIGHTED_DIST(projectedPos) \
@@ -303,8 +343,7 @@ RECOMP_PATCH s32 Audio_IsSequencePlaying(u8 seqId) {
 RECOMP_EXPORT void AudioApi_StartObjSoundFanfare(u8 seqPlayerIndex, Vec3f* pos, s32 seqId, u16 seqArgs) {
     s32 curSeqId = AudioApi_GetActiveSeqId(seqPlayerIndex);
 
-    // @mod Is the AudioSeq_IsSeqCmdNotQueued condition a bug? There is no cmdOp, but we're checking the mask
-
+    // cmdVal omits cmdOp because SEQCMD_OP_PLAY_SEQUENCE is opcode 0 (matches decomp)
     if ((curSeqId == NA_BGM_FINAL_HOURS) || sIsFinalHoursOrSoaring ||
         !AudioSeq_IsSeqCmdNotQueued((seqPlayerIndex << 0x18) + NA_BGM_FINAL_HOURS, SEQCMD_ALL_MASK)) {
         sIsFinalHoursOrSoaring = true;
@@ -334,8 +373,7 @@ RECOMP_EXPORT void AudioApi_PlayObjSoundBgm(Vec3f* pos, s32 seqId) {
     s32 seqId0 = AudioApi_GetActiveSeqId(SEQ_PLAYER_BGM_MAIN);
     u8 fadeInDuration;
 
-    // @mod Is the AudioSeq_IsSeqCmdNotQueued condition a bug? There is no cmdOp, but we're checking the mask
-
+    // cmdVal omits cmdOp because SEQCMD_OP_PLAY_SEQUENCE is opcode 0 (matches decomp)
     if ((seqId0 == NA_BGM_FINAL_HOURS) || sIsFinalHoursOrSoaring
         || !AudioSeq_IsSeqCmdNotQueued(NA_BGM_FINAL_HOURS, SEQCMD_ALL_MASK)) {
         sIsFinalHoursOrSoaring = true;
@@ -1227,7 +1265,7 @@ RECOMP_HOOK_RETURN("AudioSeq_UpdateActiveSequences") void AudioApi_UpdateActiveS
             // If there is a SeqCmd to reset the audio heap queued, then drop all setup commands
             if (!AudioSeq_IsSeqCmdNotQueued(SEQCMD_OP_RESET_AUDIO_HEAP << 28, SEQCMD_OP_MASK)) {
                 gExtActiveSeqs[seqPlayerIndex].setupCmdNum = 0;
-                break; // @mod is this a bug? Only the first sequence setup commands are dropped
+                continue;
             }
 
             // Only process setup commands once the timer reaches zero

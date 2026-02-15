@@ -9,21 +9,52 @@
 #include <core/sequence_functions.h>
 
 /**
- * This file provides the public API for modifying sequences in the various sequence tables
+ * @file sequence.c
+ * @brief Public modding API for sequence (BGM/SFX) table management in MM Recomp.
  *
- * There are two main tables for sequence data: `gSequenceTable` and `gSequenceFontTable`.
+ * == Architecture ==
+ * Four parallel arrays are managed, all indexed by seqId and dynamically growable (doubling):
+ *   - gAudioCtx.sequenceTable   : AudioTable of AudioTableEntry {romAddr, medium, size, cachePolicy}
+ *                                  For mod sequences, romAddr points to recomp_alloc'd mod memory.
+ *   - gAudioCtx.sequenceFontTable: Packed lookup table mapping seqId -> font list.
+ *                                  Layout: [u16 offsets[capacity] | (u8 numFonts, u8 fontIds[4])* ]
+ *                                  Header region is u16 per seqId giving byte offset into data region.
+ *                                  Data region is (MAX_FONTS_PER_SEQUENCE+1) bytes per seqId.
+ *   - sExtSeqFlags              : u8 per seqId, bitmask (SEQ_FLAG_ENEMY, _FANFARE, _RESTORE, etc.)
+ *   - sExtSeqLoadStatus         : u8 per seqId, tracks load state (see load_status.h)
  *
- * The first table contains the ROM address, medium, size, and cache policy. For custom sequences,
- * we set the romAddr field to the location in mod memory where the sequence is.
+ * == Lifecycle / Init Phases (AudioApiInitPhase) ==
+ *   NOT_READY(0) -> QUEUEING(1) -> QUEUED(2) -> READY(3)
+ *   - NOT_READY: API calls return early / fail.
+ *   - QUEUEING: Mods call API; mutations are enqueued (sequenceQueue) for deferred execution.
+ *   - READY:    Queue drained; API calls mutate tables directly. Restore functions need this.
  *
- * The second table associates sequences with the fonts they require. Sequence 0 is the only entry
- * that contains more than one font, but this mod expands the table to allow up to four fonts each.
+ * == Queue System ==
+ *   During QUEUEING phase, ReplaceSequence/ReplaceSequenceFont/SetSequenceFlags push commands
+ *   into sequenceQueue (RecompQueue). PushIfNotQueued deduplicates by (op, arg0, arg1).
+ *   AudioApi_SequenceReady() drains and destroys the queue on transition to READY.
  *
- * There are also two arrays, `sSeqFlags` and `sSeqLoadStatus` which are expanded to allow more than
- * the hardcoded length of the array.
+ * == Sequence ID Allocation ==
+ *   AddSequence appends to the table. IDs ending in 0xFE/0xFF are skipped (NA_BGM_DISABLED/UNKNOWN
+ *   sentinel values that vanilla code checks via low byte masking).
  *
- * The API will need to allow some way to also modify sequence data, but for now such changes must
- * be done using the `AudioApi_SequenceLoaded()` event, if necessary.
+ * == Sequence Loading / Relocation ==
+ *   AudioApi_RelocateSequence (callback on AudioApi_SequenceLoadedInternal):
+ *   - If loaded into audio heap temp buffer: copies to persistent recomp_alloc'd memory, frees buffer.
+ *   - If loaded from ROM (not KSEG0): updates romAddr to point to permanent RAM copy.
+ *   - Fires AudioApi_SequenceLoaded event for mod hooks to post-process sequence data.
+ *
+ * == Exported API Summary ==
+ *   AudioApi_AddSequence(entry)              -> s32 seqId or -1; appends new sequence
+ *   AudioApi_ReplaceSequence(seqId, entry)   -> void; overwrites entry (queueable)
+ *   AudioApi_RestoreSequence(seqId)          -> void; restores from original ROM table
+ *   AudioApi_GetSequenceFont(seqId, fontNum) -> s32 fontId or -1
+ *   AudioApi_AddSequenceFont(seqId, fontId)  -> s32 new count or -1; prepends font, shifts rest
+ *   AudioApi_ReplaceSequenceFont(seqId, n, fontId) -> void; replaces nth font (queueable)
+ *   AudioApi_RestoreSequenceFont(seqId, n)   -> void; restores nth font from ROM table
+ *   AudioApi_GetSequenceFlags(seqId)         -> u8 flags
+ *   AudioApi_SetSequenceFlags(seqId, flags)  -> void; (queueable)
+ *   AudioApi_RestoreSequenceFlags(seqId)     -> void; restores from original sSeqFlags[]
  */
 
 #define MAX_FONTS_PER_SEQUENCE 4
@@ -43,6 +74,8 @@ u8* AudioApi_RebuildSequenceFontTable(u16 oldCapacity, u16 newCapacity);
 
 RECOMP_DECLARE_EVENT(AudioApi_SequenceLoaded(s32 seqId, u8* ramAddr));
 
+/* Called during QUEUEING phase. Rebuilds font table into fixed-stride format (4 fonts/seq),
+ * then doubles capacity so custom seqIds start at 256 (avoids collisions with vanilla IDs). */
 RECOMP_CALLBACK(".", AudioApi_InitInternal) void AudioApi_SequenceInit() {
     sequenceQueue = RecompQueue_Create();
 
@@ -53,22 +86,22 @@ RECOMP_CALLBACK(".", AudioApi_InitInternal) void AudioApi_SequenceInit() {
         recomp_printf("AudioApi: Error rebuilding sequence font table\n");
     }
 
-    // Debugging, make new sequences start at 256
     AudioApi_GrowSequenceTables();
     gAudioCtx.sequenceTable->header.numEntries = gAudioCtx.numSequences = sequenceTableCapacity;
 }
 
+/* Called on transition to READY phase. Executes all deferred mutations, then frees the queue. */
 RECOMP_CALLBACK(".", AudioApi_ReadyInternal) void AudioApi_SequenceReady() {
     RecompQueue_Drain(sequenceQueue, AudioApi_SequenceQueueDrain);
     RecompQueue_Destroy(sequenceQueue);
 }
 
+/* Allocates next seqId, writes entry, auto-grows tables if needed.
+ * Skips IDs with low byte 0xFE/0xFF (vanilla sentinel values). Not queueable. */
 RECOMP_EXPORT s32 AudioApi_AddSequence(AudioTableEntry* entry) {
     if (gAudioApiInitPhase == AUDIOAPI_INIT_NOT_READY) {
         return -1;
     }
-    // Find the next available sequence ID. It should not end in 0xFE or 0xFF since
-    // that may be misinterpreted by some vanilla functions as disabled or unknown.
     s32 newSeqId = gAudioCtx.sequenceTable->header.numEntries;
     while ((newSeqId & 0xFF) == (NA_BGM_DISABLED & 0xFF) || (newSeqId & 0xFF) == (NA_BGM_UNKNOWN & 0xFF)) {
         newSeqId++;
@@ -83,6 +116,7 @@ RECOMP_EXPORT s32 AudioApi_AddSequence(AudioTableEntry* entry) {
     return newSeqId;
 }
 
+/* Overwrites an existing sequence table entry. During QUEUEING: heap-copies entry and enqueues. */
 RECOMP_EXPORT void AudioApi_ReplaceSequence(s32 seqId, AudioTableEntry* entry) {
     if (gAudioApiInitPhase == AUDIOAPI_INIT_NOT_READY) {
         return;
@@ -103,6 +137,7 @@ RECOMP_EXPORT void AudioApi_ReplaceSequence(s32 seqId, AudioTableEntry* entry) {
     gAudioCtx.sequenceTable->entries[seqId] = *entry;
 }
 
+/* Restores entry from original ROM table (gSequenceTable). Only works READY+, vanilla IDs only. */
 RECOMP_EXPORT void AudioApi_RestoreSequence(s32 seqId) {
     if (gAudioApiInitPhase < AUDIOAPI_INIT_READY) {
         return;
@@ -114,6 +149,7 @@ RECOMP_EXPORT void AudioApi_RestoreSequence(s32 seqId) {
     gAudioCtx.sequenceTable->entries[seqId] = origTable->entries[seqId];
 }
 
+/* Reads fontId at position fontNum from the font table. Returns -1 if out of bounds. */
 RECOMP_EXPORT s32 AudioApi_GetSequenceFont(s32 seqId, s32 fontNum) {
     if (seqId >= gAudioCtx.sequenceTable->header.numEntries) {
         return -1;
@@ -130,6 +166,7 @@ RECOMP_EXPORT s32 AudioApi_GetSequenceFont(s32 seqId, s32 fontNum) {
     return entry[fontNum + 1];
 }
 
+/* Prepends fontId to seqId's font list (shifts existing right). Max 4 fonts. Returns new count. */
 RECOMP_EXPORT s32 AudioApi_AddSequenceFont(s32 seqId, s32 fontId) {
     if (gAudioApiInitPhase == AUDIOAPI_INIT_NOT_READY) {
         return -1;
@@ -156,6 +193,8 @@ RECOMP_EXPORT s32 AudioApi_AddSequenceFont(s32 seqId, s32 fontId) {
     return numFonts + 1;
 }
 
+/* Replaces the fontNum-th font for seqId. If fontNum >= numFonts, falls back to AddSequenceFont.
+ * Font index is stored reversed: entry[numFonts - fontNum]. Queueable. */
 RECOMP_EXPORT void AudioApi_ReplaceSequenceFont(s32 seqId, s32 fontNum, s32 fontId) {
     if (gAudioApiInitPhase == AUDIOAPI_INIT_NOT_READY) {
         return;
@@ -186,6 +225,7 @@ RECOMP_EXPORT void AudioApi_ReplaceSequenceFont(s32 seqId, s32 fontNum, s32 font
     entry[numFonts - fontNum] = fontId;
 }
 
+/* Restores fontNum-th font from original ROM font table (gSequenceFontTable). Vanilla IDs only. */
 RECOMP_EXPORT void AudioApi_RestoreSequenceFont(s32 seqId, s32 fontNum) {
     if (gAudioApiInitPhase < AUDIOAPI_INIT_READY) {
         return;
@@ -214,12 +254,13 @@ RECOMP_EXPORT u8 AudioApi_GetSequenceFlags(s32 seqId) {
     return AudioApi_GetSequenceFlagsInternal(seqId);
 }
 
+/* Sets per-sequence flag bitmask (SEQ_FLAG_ENEMY|FANFARE|RESTORE|RESUME|etc). Queueable. */
 RECOMP_EXPORT void AudioApi_SetSequenceFlags(s32 seqId, u8 flags) {
     if (gAudioApiInitPhase == AUDIOAPI_INIT_NOT_READY) {
         return;
     }
     if (gAudioApiInitPhase == AUDIOAPI_INIT_QUEUEING) {
-        RecompQueue_PushIfNotQueued(sequenceQueue, AUDIOAPI_CMD_OP_REPLACE_SEQUENCE_FONT,
+        RecompQueue_PushIfNotQueued(sequenceQueue, AUDIOAPI_CMD_OP_SET_SEQUENCE_FLAGS,
                                      seqId, 0, (void**)&flags);
         return;
     }
@@ -236,6 +277,8 @@ RECOMP_EXPORT void AudioApi_RestoreSequenceFlags(s32 seqId) {
     AudioApi_SetSequenceFlagsInternal(seqId, sSeqFlags[seqId]);
 }
 
+/* Dispatch callback for RecompQueue_Drain. Executes deferred sequence mutations.
+ * ReplaceSequence frees heap-copied entry after applying. */
 void AudioApi_SequenceQueueDrain(RecompQueueCmd* cmd) {
     switch (cmd->op) {
     case AUDIOAPI_CMD_OP_REPLACE_SEQUENCE:
@@ -253,9 +296,10 @@ void AudioApi_SequenceQueueDrain(RecompQueueCmd* cmd) {
     }
 }
 
+/* Post-load hook: relocates sequence data from audio heap temp buffer to persistent mod memory.
+ * Also updates romAddr for ROM-loaded sequences to point to the persistent copy.
+ * Finally fires AudioApi_SequenceLoaded event so mods can patch sequence data in-place. */
 RECOMP_CALLBACK(".", AudioApi_SequenceLoadedInternal) void AudioApi_RelocateSequence(s32 seqId, void** ramAddrPtr) {
-    // If this sequence was just loaded into the audio heap load buffer, we need to relocate it
-    // to mod memory now.
     if (IS_AUDIO_HEAP_MEMORY(*ramAddrPtr)) {
         size_t size = gAudioCtx.sequenceTable->entries[seqId].size;
         void* ramAddr = recomp_alloc(size);
@@ -264,16 +308,15 @@ RECOMP_CALLBACK(".", AudioApi_SequenceLoadedInternal) void AudioApi_RelocateSequ
         *ramAddrPtr = ramAddr;
     }
 
-    // If this sequence was loaded from ROM or a callback, update the entry's romAddr to our new
-    // permanent memory.
     if (!IS_KSEG0(gAudioCtx.sequenceTable->entries[seqId].romAddr)) {
         gAudioCtx.sequenceTable->entries[seqId].romAddr = (uintptr_t)(*ramAddrPtr);
     }
 
-    // Dispatch loaded event
     AudioApi_SequenceLoaded(seqId, (u8*)(*ramAddrPtr));
 }
 
+/* Doubles capacity of all 4 sequence arrays. All-or-nothing: on any alloc failure, frees
+ * partial allocations and returns false. Frees old tables only if they were recomp_alloc'd. */
 bool AudioApi_GrowSequenceTables() {
     u16 oldCapacity = sequenceTableCapacity;
     u16 newCapacity = sequenceTableCapacity << 1;
@@ -351,14 +394,11 @@ bool AudioApi_GrowSequenceTables() {
     return false;
 }
 
+/* Rebuilds the font table into a fixed-stride format from the vanilla variable-length format.
+ * Vanilla format: u16 offsets[] -> variable-length (numFonts, fontId...) entries.
+ * New format: u16 offsets[newCapacity] | (numFonts + fontIds[4]) * newCapacity (fixed 5 bytes each).
+ * Total size: (2 + 5) * newCapacity bytes. Copies existing entries from old table for seqId < oldCapacity. */
 u8* AudioApi_RebuildSequenceFontTable(u16 oldCapacity, u16 newCapacity) {
-    // The sequence font table is a bit strange.
-    // You're supposed to cast it to an array of u16 and read the entry at the specified seqId.
-    // That gives you the offset from the start of the table when reading it as an array of u8.
-    // This is done because each sequence can have a variable number of fonts, although in the
-    // vanilla ROM only sequence 0 has two fonts, while the rest have one.
-    // We want to support more fonts per sequence, but we don't want to be constantly resizing
-    // the table each time, so we will resize it so each sequence can support up to four fonts.
 
     size_t newSize = (sizeof(u16) + MAX_FONTS_PER_SEQUENCE + 1) * newCapacity;
     u8* newSeqFontTable = recomp_alloc(newSize);

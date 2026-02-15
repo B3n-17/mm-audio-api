@@ -1,14 +1,29 @@
+/*
+ * misc.c - Shared utilities: pointer refcounting, memory/string helpers, debug hex dump, FNV-1a hash.
+ *
+ * Refcounter: Generic pointer reference counter backed by a recomp U32 memory hashmap (ptr->u16 count).
+ *   Auto-creates entries on first inc, auto-erases on dec to 0. Thread-unsafe.
+ *   init_refcounter() runs via RECOMP_CALLBACK on mod init.
+ *
+ * Utils_MemCmp: Custom memcmp (needed because libc memcmp may not be available in recomp env).
+ * Utils_StrDup: strdup using recomp_alloc (mod heap, not libc malloc).
+ * print_bytes: Hex dump to recomp_printf, 16 bytes/line, address prefix, space every 2 bytes.
+ * fnv_32a_buf: Standard FNV-1a 32-bit hash. Init with FNV1_32A_INIT (0x811c9dc5). Chainable via hval param.
+ */
 #include <utils/misc.h>
 #include <libc/string.h>
 #include <recomp/recompdata.h>
 #include <recomp/recomputils.h>
 
+/* Global refcount store: maps pointer (as u32 key) -> u16 count. */
 static U32MemoryHashmapHandle refcounter;
 
+/* Auto-called on mod init by recomp runtime. */
 RECOMP_CALLBACK("*", recomp_on_init) void init_refcounter() {
     refcounter = recomputil_create_u32_memory_hashmap(sizeof(u16));
 }
 
+/* Increment refcount for ptr. Creates entry if new. Returns new count, or 0 on hashmap failure. */
 u32 refcounter_inc(void* ptr) {
     collection_key_t key = (uintptr_t)ptr;
     if (!recomputil_u32_memory_hashmap_contains(refcounter, key)) {
@@ -21,6 +36,7 @@ u32 refcounter_inc(void* ptr) {
     return ++(*count);
 }
 
+/* Decrement refcount for ptr. Erases entry when count hits 0. Returns new count (0 = freed/missing). */
 u32 refcounter_dec(void* ptr) {
     collection_key_t key = (uintptr_t)ptr;
     u16* count = (u16*)recomputil_u32_memory_hashmap_get(refcounter, key);
@@ -34,12 +50,14 @@ u32 refcounter_dec(void* ptr) {
     return *count;
 }
 
+/* Get current refcount for ptr. Returns 0 if untracked. */
 u32 refcounter_get(void* ptr) {
     collection_key_t key = (uintptr_t)ptr;
     u16* count = (u16*)recomputil_u32_memory_hashmap_get(refcounter, key);
     return count ? *count : 0;
 }
 
+/* Byte-by-byte memory compare. Returns 0 if equal, else difference of first mismatched byte. */
 int Utils_MemCmp(const void *a, const void *b, size_t size) {
     const char *c = a;
     const char *d = b;
@@ -56,6 +74,7 @@ int Utils_MemCmp(const void *a, const void *b, size_t size) {
     return 0;
 }
 
+/* Duplicate string using recomp_alloc (mod heap). Caller must manage lifetime. */
 char *Utils_StrDup(const char *s) {
     char *newStr = recomp_alloc(strlen(s) + 1);
 
@@ -72,6 +91,7 @@ char *Utils_StrDup(const char *s) {
     return newStr;
 }
 
+/* Debug: hex dump `size` bytes at `ptr`. Format: "ADDR: XXYY XXYY ...\n", 16 bytes/line. */
 void print_bytes(void* ptr, int size) {
     unsigned char *p = ptr;
     int i;
@@ -90,33 +110,17 @@ void print_bytes(void* ptr, int size) {
 }
 
 /*
- * fnv_32a_buf - perform a 32 bit Fowler/Noll/Vo FNV-1a hash on a buffer
- *
- * input:
- *    buf  - start of buffer to hash
- *    len  - length of buffer in octets
- *    hval - previous hash value or 0 if first call
- *
- * returns:
- *    32 bit hash as a static hash type
- *
- * NOTE: To use the recommended 32 bit FNV-1a hash, use FNV1_32A_INIT as the
- *      hval arg on the first call to either fnv_32a_buf() or fnv_32a_str().
+ * FNV-1a 32-bit hash over a buffer. Chain calls by passing prev result as hval.
+ * First call: use FNV1_32A_INIT (0x811c9dc5). Prime is 0x01000193 (expanded via shifts below).
  */
 Fnv32_t fnv_32a_buf(void *buf, size_t len, Fnv32_t hval) {
-    unsigned char *bp = (unsigned char *)buf; // start of buffer
-    unsigned char *be = bp + len;             // beyond end of buffer
+    unsigned char *bp = (unsigned char *)buf;
+    unsigned char *be = bp + len;
 
-    // FNV-1a hash each octet in the buffer
     while (bp < be) {
-        // xor the bottom with the current octet
         hval ^= (Fnv32_t)*bp++;
-
-        // multiply by the 32 bit FNV magic prime mod 2^32
-        // hval *= FNV_32_PRIME;
         hval += (hval<<1) + (hval<<4) + (hval<<7) + (hval<<8) + (hval<<24);
     }
 
-    // return our new hash value
     return hval;
 }

@@ -7,9 +7,49 @@
 #include <audio/aseq.h>
 
 /**
- * This file patches just a few functions found in seqplayer.c in order to support more than 256
- * sequences. The vanilla SequencePlayer stuct has an `u8 seqId` on it, so we need to track our own
- * values in the `sExtSeqPlayersSeqId` array below.
+ * seqplayer.c — Extended Sequence Player (patches MM decomp's seqplayer.c via RECOMP_PATCH)
+ *
+ * PURPOSE: Extends the vanilla Majora's Mask audio engine to support >256 sequences.
+ * The original SequencePlayer.seqId is u8 (max 255). This file introduces a parallel
+ * s32 array `sExtSeqPlayersSeqId[SEQ_PLAYER_MAX]` to store the real seqId, and patches
+ * every function that reads/writes seqId to use getter/setter helpers instead.
+ *
+ * ARCHITECTURE:
+ *   sExtSeqPlayersSeqId[] — shadow array indexed by playerIndex, holds true s32 seqId
+ *   AudioApi_SetSeqPlayerSeqId() — RECOMP_EXPORT: sets both shadow array and vanilla u8 field
+ *     (clamps to NA_BGM_UNKNOWN if seqId >= 256 so vanilla code doesn't break)
+ *   AudioApi_GetSeqPlayerSeqId() — RECOMP_EXPORT: reads from shadow array
+ *
+ * PATCHED FUNCTIONS (all RECOMP_PATCH, replacing vanilla implementations):
+ *   AudioLoad_SyncInitSeqPlayerInternal — loads fonts + seq data, resets player, sets extended seqId
+ *   AudioScript_SequencePlayerDisable    — disables player, marks seq/font discardable via extended seqId
+ *   AudioHeap_DiscardSequence            — iterates players, disables those matching extended seqId
+ *   AudioScript_SequenceChannelProcessScript — MML bytecode interpreter for channel-level commands
+ *     (patched because ASEQ_OP_CHAN_FONTINSTR and ASEQ_OP_CHAN_FONT do font table lookups using seqId)
+ *   AudioScript_SequencePlayerProcessSequence — MML bytecode interpreter for sequence-level commands
+ *     (patched because it checks seq/font load status and sets load status using seqId)
+ *
+ * MML SCRIPT ENGINE OVERVIEW (the two large process functions):
+ *   The MM audio engine executes MML (Music Macro Language) bytecode scripts.
+ *   Three hierarchy levels: SequencePlayer → SequenceChannel[16] → SequenceLayer[4]
+ *
+ *   SequencePlayerProcessSequence (cmds 0x00-0xF1+):
+ *     0x00-0xBF: Nibble-encoded — high nibble=opcode, low nibble=channel/IO index
+ *       Handles: test channel, IO read/write/subtract, enable/disable channels, load seq/resources
+ *     0xC0-0xF1: Sequence-level commands
+ *       Handles: tempo, volume, transpose, mute, note allocation, dyncall, script self-modify
+ *     0xF2+: Flow control (jump, loop, call, return, end) via AudioScript_HandleScriptFlowControl
+ *
+ *   SequenceChannelProcessScript (cmds 0x00-0xFF):
+ *     0x00-0x6F: Nibble-encoded — high nibble=opcode, low nibble=IO index
+ *       Handles: delay, IO read/write/subtract, sample loading, enable channels
+ *     0x70-0x9F: Layer management + IO writes
+ *       Handles: set/free/dynset layers, test layer finished, IO write, relative layer set
+ *     0xA0-0xF1: Channel parameter commands (volume, pan, transpose, vibrato, reverb, filter, etc.)
+ *     0xF2+: Flow control (same as sequence level)
+ *     After script processing, iterates and processes all active layers.
+ *
+ * "@mod" COMMENTS: Mark lines that differ from vanilla decomp (the actual patches within each fn).
  */
 
 #define PROCESS_SCRIPT_END -1

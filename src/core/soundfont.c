@@ -11,52 +11,93 @@
 #include <core/load_status.h>
 
 /**
- * This file provides the public API for creating and modifying soundfont data
+ * SoundFont Public API - Create, modify, and manage N64 audio soundfont data for recomp mods.
  *
- * Since the soundfonts are only read from the ROM when needed, we need to queue actions until the
- * font is actually loaded. Once loaded, we will make a copy of the ROM data into our CustomSoundFont
- * type and update the romAddr in the soundFont table.
+ * ARCHITECTURE:
+ *   Vanilla soundfonts live in ROM and are loaded on-demand. This API wraps them with a
+ *   CustomSoundFont struct (heap-allocated) that replaces the ROM entry's romAddr pointer.
  *
+ * LIFECYCLE (3-phase init via gAudioApiInitPhase):
+ *   1. AUDIOAPI_INIT_NOT_READY  - API calls rejected (return -1 / early return)
+ *   2. AUDIOAPI_INIT_QUEUEING   - Mod registration phase; commands queue to soundFontInitQueue
+ *   3. AUDIOAPI_INIT_READY       - Commands apply immediately if font is CustomSoundFont in RAM
+ *                                  (IS_KSEG0 + type==SOUNDFONT_CUSTOM), else queue to soundFontLoadQueue
+ *                                  for deferred apply when ROM font is actually loaded.
+ *
+ * QUEUE SYSTEM (two queues):
+ *   soundFontInitQueue  - Collects commands during QUEUEING phase, drained at READY transition.
+ *   soundFontLoadQueue  - Holds commands for ROM-based fonts; applied in AudioLoad_RelocateFont()
+ *                         when the engine loads font data from ROM into RAM.
+ *
+ * FONT DATA LAYOUT (vanilla ROM format, read as uintptr_t*):
+ *   [0] = offset to drums array,  [1] = offset to SFX array,
+ *   [2..2+numInstruments-1] = offsets to instruments (SOUNDFONT_INSTRUMENT_OFFSET = 2)
+ *   All offsets are relative to font base; RELOC_TO_RAM converts offset -> absolute pointer.
+ *
+ * MEMORY OWNERSHIP:
+ *   - All Add/Replace API calls deep-copy inputs (AudioApi_Copy*) so caller retains ownership.
+ *   - Sample copies are deduplicated via FNV-32a hash -> sampleHashmap (ADPCM codecs only).
+ *   - Samples are ref-counted; AudioApi_FreeSample only frees when refcount hits 0.
+ *   - Dynamic arrays (instruments/drums/sfx) grow by doubling capacity when full.
+ *   - Global soundfont tables also double (soundFontTable, soundFontList, loadStatus).
+ *   - IS_RECOMP_ALLOC guards prevent freeing pointers not owned by recomp_alloc.
+ *   - IS_AUDIO_HEAP_MEMORY guards trigger copy-out from transient audio heap during relocation.
+ *
+ * KEY PATCHED FUNCTION:
+ *   AudioLoad_RelocateFont (RECOMP_PATCH) - Intercepts vanilla font loading. For SOUNDFONT_VANILLA
+ *   type, imports into CustomSoundFont, applies queued changes, then relocates all pointers
+ *   (drums/sfx/instruments/samples/envelopes/loops/books). Replaces the table entry's romAddr
+ *   with the permanent CustomSoundFont pointer. Fires AudioApi_SoundFontLoaded event.
+ *
+ *   AudioLoad_RelocateSample (RECOMP_PATCH) - Relocates sample pointers (loop/book/sampleAddr)
+ *   and resolves sample bank base addresses. Handles DMA callback device addresses.
+ *
+ * INSTRUMENT NOTE RANGES:
+ *   Instruments have 3 pitch regions: low (normalRangeLo != 0), normal, high (normalRangeHi != 0x7F).
+ *   Each has its own TunedSample. Copy/reloc only processes low/high if range bounds indicate use.
  */
 
-#define NA_SOUNDFONT_MAX 0x28 // Number of vanilla soundfonts
-#define SOUNDFONT_DEFAULT_SAMPLEBANK_1 1
-#define SOUNDFONT_DEFAULT_SAMPLEBANK_2 255
-#define SOUNDFONT_MAX_INSTRUMENTS 126
-#define SOUNDFONT_MAX_DRUMS 256
-#define SOUNDFONT_MAX_SFX 2048
-#define SOUNDFONT_DEFAULT_INSTRUMENT_CAPACITY 16
+/* Limits & defaults */
+#define NA_SOUNDFONT_MAX 0x28               // 40 vanilla soundfonts in MM
+#define SOUNDFONT_DEFAULT_SAMPLEBANK_1 1    // Primary sample bank default
+#define SOUNDFONT_DEFAULT_SAMPLEBANK_2 255  // Secondary sample bank default (0xFF = none)
+#define SOUNDFONT_MAX_INSTRUMENTS 126       // Hard cap per font
+#define SOUNDFONT_MAX_DRUMS 256             // Hard cap per font
+#define SOUNDFONT_MAX_SFX 2048              // Hard cap per font
+#define SOUNDFONT_DEFAULT_INSTRUMENT_CAPACITY 16 // Initial alloc, doubles on overflow
 #define SOUNDFONT_DEFAULT_DRUM_CAPACITY 16
 #define SOUNDFONT_DEFAULT_SFX_CAPACITY 8
-#define SOUNDFONT_INSTRUMENT_OFFSET 2
+#define SOUNDFONT_INSTRUMENT_OFFSET 2       // In vanilla font data, instruments start at word[2]
 
-// Relocate an offset (relative to the start of the font data) to a pointer (a ram address)
+// Convert ROM-relative offset to absolute RAM pointer. No-op if already a KSEG0 address.
 #define RELOC_TO_RAM(x, base) (void*)((uintptr_t)(x) + (uintptr_t)(IS_KSEG0(x) ? 0 : base))
 
+/* Passed to AudioLoad_RelocateSample; maps sample bank indices 0/1 to resolved base addresses */
 typedef struct {
     s32 sampleBankId1;
     s32 sampleBankId2;
-    uintptr_t baseAddr1;
-    uintptr_t baseAddr2;
-    u32 medium1;
-    u32 medium2;
+    uintptr_t baseAddr1;  // Resolved addr for primary sample bank
+    uintptr_t baseAddr2;  // Resolved addr for secondary sample bank
+    u32 medium1;          // Storage medium (RAM/cart/disk) for bank 1
+    u32 medium2;          // Storage medium for bank 2
 } SampleBankRelocInfo;
 
+/* Opcodes for deferred soundfont modifications (stored in init/load queues) */
 typedef enum {
-    AUDIOAPI_CMD_OP_REPLACE_SOUNDFONT,
-    AUDIOAPI_CMD_OP_SET_SAMPLEBANK,
-    AUDIOAPI_CMD_OP_ADD_DRUM,
-    AUDIOAPI_CMD_OP_REPLACE_DRUM,
-    AUDIOAPI_CMD_OP_ADD_SOUNDEFFECT,
-    AUDIOAPI_CMD_OP_REPLACE_SOUNDEFFECT,
-    AUDIOAPI_CMD_OP_ADD_INSTRUMENT,
-    AUDIOAPI_CMD_OP_REPLACE_INSTRUMENT,
+    AUDIOAPI_CMD_OP_REPLACE_SOUNDFONT,   // Swap entire font entry (data=AudioTableEntry*)
+    AUDIOAPI_CMD_OP_SET_SAMPLEBANK,      // arg1=bankNum(1|2), data=bankId
+    AUDIOAPI_CMD_OP_ADD_DRUM,            // data=Drum*
+    AUDIOAPI_CMD_OP_REPLACE_DRUM,        // arg1=drumId, data=Drum*
+    AUDIOAPI_CMD_OP_ADD_SOUNDEFFECT,     // data=SoundEffect*
+    AUDIOAPI_CMD_OP_REPLACE_SOUNDEFFECT, // arg1=sfxId, data=SoundEffect*
+    AUDIOAPI_CMD_OP_ADD_INSTRUMENT,      // data=Instrument*
+    AUDIOAPI_CMD_OP_REPLACE_INSTRUMENT,  // arg1=instId, data=Instrument*
 } AudioApiSoundFontQueueOp;
 
-RecompQueue* soundFontInitQueue;
-RecompQueue* soundFontLoadQueue;
-U32ValueHashmapHandle sampleHashmap;
-u16 soundFontTableCapacity = NA_SOUNDFONT_MAX;
+RecompQueue* soundFontInitQueue;   // Drained once at QUEUEING->READY transition
+RecompQueue* soundFontLoadQueue;   // Drained per-font in AudioLoad_RelocateFont
+U32ValueHashmapHandle sampleHashmap; // FNV32 hash -> Sample* for ADPCM dedup
+u16 soundFontTableCapacity = NA_SOUNDFONT_MAX; // Current alloc size, doubles on overflow
 
 void AudioApi_SoundFontQueueDrain(RecompQueueCmd* cmd);
 void AudioLoad_RelocateSample(TunedSample* tunedSample, void* fontData, SampleBankRelocInfo* sampleBankReloc);
@@ -80,28 +121,27 @@ extern u32 AudioLoad_GetRealTableIndex(s32 tableType, u32 id);
 RECOMP_DECLARE_EVENT(AudioApi_SoundFontLoaded(s32 fontId, u8* ramAddr));
 
 
+/* Called during AudioApi_InitInternal callback. Sets up queues, hashmap, and vanilla font list. */
 RECOMP_CALLBACK(".", AudioApi_InitInternal) void AudioApi_SoundFontInit() {
-    // Queue for the init phase so that mods can register data in the correct order
-    soundFontInitQueue = RecompQueue_Create();
+    soundFontInitQueue = RecompQueue_Create();  // Holds mod cmds during QUEUEING phase
+    soundFontLoadQueue = RecompQueue_Create();  // Holds cmds for not-yet-loaded ROM fonts
+    sampleHashmap = recomputil_create_u32_value_hashmap(); // ADPCM sample dedup cache
 
-    // Queue for when ROM soundfonts are actually loaded in order to apply our changes
-    soundFontLoadQueue = RecompQueue_Create();
-
-    // Hashmap to detect duplicate sample structs before copy
-    sampleHashmap = recomputil_create_u32_value_hashmap();
-
-    // Initialize vanillla soundfont list
     gAudioCtx.soundFontList = recomp_alloc(soundFontTableCapacity * sizeof(SoundFont));
     for (u32 i = 0; i < soundFontTableCapacity; i++) {
-        AudioLoad_InitSoundFont(i);
+        AudioLoad_InitSoundFont(i); // Populate runtime SoundFont metadata from table entries
     }
 }
 
+/* Called at QUEUEING->READY transition. Flushes all queued init-phase commands. */
 RECOMP_CALLBACK(".", AudioApi_ReadyInternal) void AudioApi_SoundFontReady() {
     RecompQueue_Drain(soundFontInitQueue, AudioApi_SoundFontQueueDrain);
     RecompQueue_Destroy(soundFontInitQueue);
 }
 
+/* Register a new soundfont entry. Returns fontId or -1 on failure. Grows table if needed.
+ * If entry->romAddr is a CustomSoundFont (IS_KSEG0 + SOUNDFONT_CUSTOM), packs metadata into
+ * shortData1/2/3 fields (sampleBanks, instrument/drum counts, sfx count). */
 RECOMP_EXPORT s32 AudioApi_AddSoundFont(AudioTableEntry* entry) {
     if (gAudioApiInitPhase == AUDIOAPI_INIT_NOT_READY) {
         return -1;
@@ -130,6 +170,7 @@ RECOMP_EXPORT s32 AudioApi_AddSoundFont(AudioTableEntry* entry) {
     return newFontId;
 }
 
+/* Replace an existing font's table entry. Queues during QUEUEING phase (copies entry). */
 RECOMP_EXPORT void AudioApi_ReplaceSoundFont(s32 fontId, AudioTableEntry* entry) {
     if (gAudioApiInitPhase == AUDIOAPI_INIT_NOT_READY) {
         return;
@@ -160,6 +201,7 @@ RECOMP_EXPORT void AudioApi_ReplaceSoundFont(s32 fontId, AudioTableEntry* entry)
     AudioLoad_InitSoundFont(fontId);
 }
 
+/* Restore a font entry to its original vanilla ROM state from gSoundFontTable backup. */
 RECOMP_EXPORT void AudioApi_RestoreSoundFont(s32 fontId) {
     if (gAudioApiInitPhase < AUDIOAPI_INIT_READY) {
         return;
@@ -172,6 +214,7 @@ RECOMP_EXPORT void AudioApi_RestoreSoundFont(s32 fontId) {
     AudioLoad_InitSoundFont(fontId);
 }
 
+/* Alloc a zeroed CustomSoundFont with default capacities and sample banks. Returns NULL on OOM. */
 CustomSoundFont* AudioApi_CreateEmptySoundFontInternal() {
     CustomSoundFont* soundFont = NULL;
     size_t size;
@@ -213,6 +256,7 @@ CustomSoundFont* AudioApi_CreateEmptySoundFontInternal() {
     return NULL;
 }
 
+/* Public: Create and register an empty soundfont. Returns fontId or -1. */
 RECOMP_EXPORT s32 AudioApi_CreateEmptySoundFont() {
     CustomSoundFont* soundFont = AudioApi_CreateEmptySoundFontInternal();
 
@@ -238,6 +282,10 @@ RECOMP_EXPORT s32 AudioApi_CreateEmptySoundFont() {
     return fontId;
 }
 
+/* Convert raw vanilla ROM font data (uintptr_t array) into a heap-allocated CustomSoundFont.
+ * Copies instrument/drum/sfx pointer arrays from the ROM layout. Does NOT relocate pointers;
+ * the caller must relocate drums[i], instruments[i], envelopes, samples etc. afterwards.
+ * Capacities auto-grow (doubling) to fit the actual counts. */
 CustomSoundFont* AudioApi_ImportVanillaSoundFontInternal(uintptr_t* fontData, u8 sampleBank1, u8 sampleBank2,
                                                          u8 numInstruments, u8 numDrums, u16 numSfx) {
     CustomSoundFont* soundFont = NULL;
@@ -289,6 +337,9 @@ CustomSoundFont* AudioApi_ImportVanillaSoundFontInternal(uintptr_t* fontData, u8
     return NULL;
 }
 
+/* Public: Import vanilla font data, relocate all internal pointers (drums->envelope->sample->
+ * loop/book, sfx->sample->loop/book, instruments->{low,normal,high}PitchSample->loop/book),
+ * then register as new CustomSoundFont. Returns fontId or -1. */
 RECOMP_EXPORT s32 AudioApi_ImportVanillaSoundFont(uintptr_t* fontData, u8 sampleBank1, u8 sampleBank2,
                                                   u8 numInstruments, u8 numDrums, u16 numSfx) {
     AudioTableEntry entry;
@@ -383,6 +434,8 @@ RECOMP_EXPORT s32 AudioApi_ImportVanillaSoundFont(uintptr_t* fontData, u8 sample
     return fontId;
 }
 
+/* Set primary (bankNum=1) or secondary (bankNum=2) sample bank for a font.
+ * Applies immediately to CustomSoundFonts; queues for ROM fonts. */
 RECOMP_EXPORT void AudioApi_SetSoundFontSampleBank(s32 fontId, s32 bankNum, s32 bankId) {
     if (gAudioApiInitPhase == AUDIOAPI_INIT_NOT_READY) {
         return;
@@ -415,6 +468,7 @@ RECOMP_EXPORT void AudioApi_SetSoundFontSampleBank(s32 fontId, s32 bankNum, s32 
     }
 }
 
+/* Append instrument to CustomSoundFont, growing array if needed. Returns instId or -1. */
 s32 AudioApi_AddInstrumentInternal(CustomSoundFont* soundFont, Instrument* instrument) {
     if (soundFont->numInstruments >= soundFont->instrumentsCapacity) {
         if (!AudioApi_GrowInstrumentList(soundFont)) {
@@ -426,6 +480,7 @@ s32 AudioApi_AddInstrumentInternal(CustomSoundFont* soundFont, Instrument* instr
     return instId;
 }
 
+/* Public: Deep-copy instrument and add to font. Immediate for custom fonts, queued for ROM. */
 RECOMP_EXPORT s32 AudioApi_AddInstrument(s32 fontId, Instrument* instrument) {
     if (gAudioApiInitPhase == AUDIOAPI_INIT_NOT_READY) {
         return -1;
@@ -462,6 +517,7 @@ RECOMP_EXPORT s32 AudioApi_AddInstrument(s32 fontId, Instrument* instrument) {
     return instId;
 }
 
+/* Append drum to CustomSoundFont, growing array if needed. Returns drumId or -1. */
 s32 AudioApi_AddDrumInternal(CustomSoundFont* soundFont, Drum* drum) {
     if (soundFont->numDrums >= soundFont->drumsCapacity) {
         if (!AudioApi_GrowDrumList(soundFont)) {
@@ -473,6 +529,7 @@ s32 AudioApi_AddDrumInternal(CustomSoundFont* soundFont, Drum* drum) {
     return drumId;
 }
 
+/* Public: Deep-copy drum and add to font. Immediate for custom fonts, queued for ROM. */
 RECOMP_EXPORT s32 AudioApi_AddDrum(s32 fontId, Drum* drum) {
     if (gAudioApiInitPhase == AUDIOAPI_INIT_NOT_READY) {
         return -1;
@@ -509,6 +566,7 @@ RECOMP_EXPORT s32 AudioApi_AddDrum(s32 fontId, Drum* drum) {
     return drumId;
 }
 
+/* Append SFX to CustomSoundFont (value-copies then frees input). Returns sfxId or -1. */
 s32 AudioApi_AddSoundEffectInternal(CustomSoundFont* soundFont, SoundEffect* sfx) {
     if (soundFont->numSfx >= soundFont->sfxCapacity) {
         if (!AudioApi_GrowSoundEffectList(soundFont)) {
@@ -521,6 +579,7 @@ s32 AudioApi_AddSoundEffectInternal(CustomSoundFont* soundFont, SoundEffect* sfx
     return sfxId;
 }
 
+/* Public: Deep-copy SFX and add to font. Immediate for custom fonts, queued for ROM. */
 RECOMP_EXPORT s32 AudioApi_AddSoundEffect(s32 fontId, SoundEffect* sfx) {
     if (gAudioApiInitPhase == AUDIOAPI_INIT_NOT_READY) {
         return -1;
@@ -557,12 +616,14 @@ RECOMP_EXPORT s32 AudioApi_AddSoundEffect(s32 fontId, SoundEffect* sfx) {
     return sfxId;
 }
 
+/* Replace drum at drumId in-place. No bounds growth; silently no-ops if drumId >= numDrums. */
 void AudioApi_ReplaceDrumInternal(CustomSoundFont* soundFont, s32 drumId, Drum* drum) {
     if (drumId < soundFont->numDrums) {
         soundFont->drums[drumId] = drum;
     }
 }
 
+/* Public: Deep-copy and replace drum. Queues during QUEUEING; defers for ROM fonts. */
 RECOMP_EXPORT void AudioApi_ReplaceDrum(s32 fontId, s32 drumId, Drum* drum) {
     if (gAudioApiInitPhase == AUDIOAPI_INIT_NOT_READY) {
         return;
@@ -591,6 +652,7 @@ RECOMP_EXPORT void AudioApi_ReplaceDrum(s32 fontId, s32 drumId, Drum* drum) {
     }
 }
 
+/* Replace SFX at sfxId (value-copy, frees input). No-op if sfxId >= numSfx. */
 void AudioApi_ReplaceSoundEffectInternal(CustomSoundFont* soundFont, s32 sfxId, SoundEffect* sfx) {
     if (sfxId < soundFont->numSfx) {
         soundFont->soundEffects[sfxId] = *sfx;
@@ -598,6 +660,7 @@ void AudioApi_ReplaceSoundEffectInternal(CustomSoundFont* soundFont, s32 sfxId, 
     recomp_free(sfx);
 }
 
+/* Public: Deep-copy and replace SFX. Queues during QUEUEING; defers for ROM fonts. */
 RECOMP_EXPORT void AudioApi_ReplaceSoundEffect(s32 fontId, s32 sfxId, SoundEffect* sfx) {
     if (gAudioApiInitPhase == AUDIOAPI_INIT_NOT_READY) {
         return;
@@ -626,12 +689,14 @@ RECOMP_EXPORT void AudioApi_ReplaceSoundEffect(s32 fontId, s32 sfxId, SoundEffec
     }
 }
 
+/* Replace instrument at instId. No-op if instId >= numInstruments. */
 void AudioApi_ReplaceInstrumentInternal(CustomSoundFont* soundFont, s32 instId, Instrument* instrument) {
     if (instId < soundFont->numInstruments)  {
         soundFont->instruments[instId] = instrument;
     }
 }
 
+/* Public: Deep-copy and replace instrument. Queues during QUEUEING; defers for ROM fonts. */
 RECOMP_EXPORT void AudioApi_ReplaceInstrument(s32 fontId, s32 instId, Instrument* instrument) {
     if (gAudioApiInitPhase == AUDIOAPI_INIT_NOT_READY) {
         return;
@@ -660,6 +725,9 @@ RECOMP_EXPORT void AudioApi_ReplaceInstrument(s32 fontId, s32 instId, Instrument
     }
 }
 
+/* Init queue drain callback. For each cmd: if font is already a CustomSoundFont in RAM,
+ * apply immediately; otherwise forward to soundFontLoadQueue for deferred application.
+ * REPLACE_SOUNDFONT is special-cased: re-calls AudioApi_ReplaceSoundFont and frees the copy. */
 void AudioApi_SoundFontQueueDrain(RecompQueueCmd* cmd) {
     s32 fontId = cmd->arg0;
     if (fontId >= gAudioCtx.soundFontTable->header.numEntries) {
@@ -706,6 +774,8 @@ void AudioApi_SoundFontQueueDrain(RecompQueueCmd* cmd) {
     }
 }
 
+/* Scan soundFontLoadQueue for all entries matching fontId and apply them to the
+ * now-loaded CustomSoundFont. Called from AudioLoad_RelocateFont for vanilla fonts. */
 void AudioApi_ApplySoundFontChanges(s32 fontId, CustomSoundFont* customSoundFont) {
     RecompQueueCmd* cmd;
     for (s32 i = 0; i < soundFontLoadQueue->numEntries; i++) {
@@ -737,8 +807,17 @@ void AudioApi_ApplySoundFontChanges(s32 fontId, CustomSoundFont* customSoundFont
 }
 
 /**
- * Read and extract information from soundFont binary loaded into ram.
- * Also relocate offsets into pointers within this loaded soundFont
+ * RECOMP_PATCH: Replaces vanilla AudioLoad_RelocateFont.
+ *
+ * Called by the audio engine when a soundfont finishes loading from ROM.
+ * For SOUNDFONT_VANILLA: imports into CustomSoundFont via ImportVanillaSoundFontInternal,
+ * then applies any queued load-queue changes (AudioApi_ApplySoundFontChanges).
+ * Then for ALL fonts: relocates every drum/sfx/instrument and their nested
+ * envelopes + samples (via AudioLoad_RelocateSample). Items in the transient audio heap
+ * (IS_AUDIO_HEAP_MEMORY) are deep-copied out to permanent recomp_alloc memory.
+ * Finally updates gAudioCtx.soundFontList[fontId] with relocated pointers/counts,
+ * frees transient buffers, sets entry->romAddr to the permanent CustomSoundFont,
+ * and fires the AudioApi_SoundFontLoaded event.
  */
 RECOMP_PATCH void AudioLoad_RelocateFont(s32 fontId, void* fontDataStartAddr, SampleBankRelocInfo* sampleBankReloc) {
     CustomSoundFont* fontData = (CustomSoundFont*)fontDataStartAddr;
@@ -842,6 +921,12 @@ RECOMP_PATCH void AudioLoad_RelocateFont(s32 fontId, void* fontDataStartAddr, Sa
     AudioApi_SoundFontLoaded(fontId, (u8*)fontData);
 }
 
+/**
+ * RECOMP_PATCH: Relocate a TunedSample's Sample pointer and its sub-pointers (loop, book).
+ * Resolves sample bank base address: medium==0 -> bank1, medium==1 -> bank2.
+ * For DMA callback addresses, wraps via AudioApi_AddDmaSubCallback instead of direct reloc.
+ * Sets sample->isRelocated=true to prevent double-relocation.
+ */
 RECOMP_PATCH void AudioLoad_RelocateSample(TunedSample* tunedSample, void* fontData, SampleBankRelocInfo* sampleBankReloc) {
     Sample* sample = tunedSample->sample = RELOC_TO_RAM(tunedSample->sample, fontData);
     uintptr_t baseAddr;
@@ -869,8 +954,10 @@ RECOMP_PATCH void AudioLoad_RelocateSample(TunedSample* tunedSample, void* fontD
     }
 }
 
-// ======== MEMORY FUNCTIONS ========
+// ======== MEMORY MANAGEMENT: Dynamic array growth + deep copy + ref-counted free ========
 
+/* Double the capacity of ALL global soundfont tables (soundFontTable, soundFontList,
+ * sExtSoundFontLoadStatus). Copies old data, frees old allocs if recomp-owned. */
 bool AudioApi_GrowSoundFontTables() {
     u16 oldCapacity = soundFontTableCapacity;
     u16 newCapacity = soundFontTableCapacity << 1;
@@ -936,6 +1023,7 @@ bool AudioApi_GrowSoundFontTables() {
     return false;
 }
 
+/* Double a CustomSoundFont's instruments array capacity. */
 bool AudioApi_GrowInstrumentList(CustomSoundFont* soundFont) {
     Instrument** newInstList = NULL;
     u16 oldCapacity = soundFont->instrumentsCapacity;
@@ -958,6 +1046,7 @@ bool AudioApi_GrowInstrumentList(CustomSoundFont* soundFont) {
     return true;
 }
 
+/* Double a CustomSoundFont's drums array capacity. */
 bool AudioApi_GrowDrumList(CustomSoundFont* soundFont) {
     Drum** newDrumList = NULL;
     u16 oldCapacity = soundFont->drumsCapacity;
@@ -980,6 +1069,7 @@ bool AudioApi_GrowDrumList(CustomSoundFont* soundFont) {
     return true;
 }
 
+/* Double a CustomSoundFont's soundEffects array capacity. */
 bool AudioApi_GrowSoundEffectList(CustomSoundFont* soundFont) {
     SoundEffect* newSfxList = NULL;
     u16 oldCapacity = soundFont->sfxCapacity;
@@ -1002,6 +1092,8 @@ bool AudioApi_GrowSoundEffectList(CustomSoundFont* soundFont) {
     return true;
 }
 
+/* Deep-copy a Drum: copies struct, deep-copies sample (via CopySample), and copies
+ * envelope array (scans for ADSR_DISABLE/ADSR_HANG terminator to determine length). */
 Drum* AudioApi_CopyDrum(Drum* src) {
     if (!src) return NULL;
 
@@ -1038,6 +1130,7 @@ Drum* AudioApi_CopyDrum(Drum* src) {
     return copy;
 }
 
+/* Deep-copy a SoundEffect: copies struct and deep-copies its sample. */
 SoundEffect* AudioApi_CopySoundEffect(SoundEffect* src) {
     if (!src) return NULL;
 
@@ -1057,6 +1150,8 @@ SoundEffect* AudioApi_CopySoundEffect(SoundEffect* src) {
     return copy;
 }
 
+/* Deep-copy an Instrument: copies struct, envelope, and up to 3 TunedSamples
+ * (lowPitch, normalPitch, highPitch). isRelocated is AND'd with all sample reloc states. */
 Instrument* AudioApi_CopyInstrument(Instrument* src) {
     if (!src) return NULL;
 
@@ -1111,6 +1206,8 @@ Instrument* AudioApi_CopyInstrument(Instrument* src) {
     return copy;
 }
 
+/* Compute FNV-32a hash of a Sample for dedup. Hashes the Sample struct (minus last 2 ptrs),
+ * plus the loop data and ADPCM codebook data. Used by CopySample to avoid duplicate heap allocs. */
 Fnv32_t AudioApi_HashSample(Sample* sample) {
     if (!sample) return 0;
 
@@ -1133,6 +1230,10 @@ Fnv32_t AudioApi_HashSample(Sample* sample) {
 }
 
 
+/* Deep-copy a Sample with ADPCM dedup. For CODEC_ADPCM/CODEC_SMALL_ADPCM, hashes the sample
+ * and returns an existing ref-counted copy if found in sampleHashmap. Otherwise allocs new
+ * Sample + loop (AdpcmLoop or just header if count==0) + book (header + 8*order*numPredictors
+ * s16 coefficients). KSEG0 sampleAddr -> sets medium=MEDIUM_CART, isRelocated=true. */
 Sample* AudioApi_CopySample(Sample* src) {
     if (!src) return NULL;
 
@@ -1197,6 +1298,7 @@ Sample* AudioApi_CopySample(Sample* src) {
     return copy;
 }
 
+/* Free a CustomSoundFont and its arrays (does NOT free individual instruments/drums/samples). */
 void AudioApi_FreeSoundFont(CustomSoundFont* soundFont) {
     if (!soundFont) return;
     if (soundFont->instruments) recomp_free(soundFont->instruments);
@@ -1205,6 +1307,7 @@ void AudioApi_FreeSoundFont(CustomSoundFont* soundFont) {
     recomp_free(soundFont);
 }
 
+/* Free drum, its sample (ref-counted), and its envelope. */
 void AudioApi_FreeDrum(Drum* drum) {
     if (!drum) return;
     if (drum->tunedSample.sample) AudioApi_FreeSample(drum->tunedSample.sample);
@@ -1212,12 +1315,14 @@ void AudioApi_FreeDrum(Drum* drum) {
     recomp_free(drum);
 }
 
+/* Free SFX and its sample (ref-counted). */
 void AudioApi_FreeSoundEffect(SoundEffect* sfx) {
     if (!sfx) return;
     if (sfx->tunedSample.sample) AudioApi_FreeSample(sfx->tunedSample.sample);
     recomp_free(sfx);
 }
 
+/* Free instrument, its envelope, and all 3 pitch region samples (ref-counted). */
 void AudioApi_FreeInstrument(Instrument* instrument) {
     if (!instrument) return;
     if (instrument->envelope) recomp_free(instrument->envelope);
@@ -1227,6 +1332,7 @@ void AudioApi_FreeInstrument(Instrument* instrument) {
     recomp_free(instrument);
 }
 
+/* Ref-counted free: decrements refcount, only frees sample+loop+book when refcount hits 0. */
 void AudioApi_FreeSample(Sample* sample) {
     if (!sample) return;
     if (refcounter_dec(sample) > 0) return;

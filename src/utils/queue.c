@@ -3,67 +3,23 @@
 #include <recomp/recomputils.h>
 
 /**
- * This file provides a generic queue implementation for recomp inspired by the global audio command
- * queue from Majora's Mask. It is especially useful for API mods that need to provide client mods
- * a way to register data, ensuring that the correct loading order is respected.
+ * Generic dynamic-array command queue for N64 recomp mods.
+ * Inspired by MM's global audio command queue (AudioCmd).
  *
- * ```c
- * #include "modding.h"
- * #include "queue.h"
+ * Struct layout (see queue.h):
+ *   RecompQueueCmd { u32 op, arg0, arg1; union { void* data/asPtr; f32 asFloat; s32 asInt; u32 asUInt; u16 asUShort; s8/u8 } }
+ *   RecompQueue    { RecompQueueCmd* entries; u16 numEntries, capacity; }
  *
- * typedef enum {
- *     MYMOD_DO_ACTION_A,
- *     MYMOD_DO_ACTION_B,
- *     MYMOD_DO_ACTION_C,
- * } MyModQueueOp;
- *
- * RecompQueue* myQueue;
- *
- * void MyMod_DrainQueue(RecompQueueCmd* cmd);
- *
- * RECOMP_CALLBACK("*", recomp_on_init) void my_mod_init() {
- *     myQueue = RecompQueue_Create();
- *
- *     // These can hold any data you like
- *     u32 arg0, arg1;
- *
- *     s32 myInt = 42;
- *     RecompQueue_Push(myQueue, MYMOD_DO_ACTION_A, arg0, arg1, (void**)&myInt);
- *
- *     f32 myFloat = 42.0f;
- *     RecompQueue_Push(myQueue, MYMOD_DO_ACTION_B, arg0, arg1, (void**)&myFloat);
- *
- *     Actor* myPtr = someObj->actor;
- *     RecompQueue_Push(myQueue, MYMOD_DO_ACTION_C, arg0, arg1, (void**)&myPtr);
- *
- *     // Call MyMod_QueueDrain() once for each entry in the queue
- *     RecompQueue_Drain(myQueue, MyMod_QueueDrain);
- *
- *     // If you're done destroy it, or leave open
- *     RecompQueue_Destroy(myQueue);
- * }
- *
- * void MyMod_DrainQueue(RecompQueueCmd* cmd) {
- *     switch (cmd->op) {
- *     case MYMOD_DO_ACTION_A:
- *         recomp_printf("A: arg0: %d, arg1: %d, data: %d\n", cmd->arg0, cmd->arg1, cmd->asInt);
- *         break;
- *     case MYMOD_DO_ACTION_B:
- *         recomp_printf("B: arg0: %d, arg1: %d, data: %.2f\n", cmd->arg0, cmd->arg1, cmd->asFloat);
- *         break;
- *     case MYMOD_DO_ACTION_C:
- *         recomp_printf("C: arg0: %d, arg1: %d, data: %p\n", cmd->arg0, cmd->arg1, cmd->asPtr);
- *         recomp_free(cmd->asPtr);
- *         break;
- *     default:
- *         break;
- *     }
- * }
- * ```
+ * Lifecycle: Create -> Push(es) -> Drain (calls callback per entry, resets count) -> Destroy.
+ * Memory: uses recomp_alloc/recomp_free (host-side allocator). Grows by 2x, never shrinks.
+ * Push stores op + two u32 args + a type-punned union value (deref'd from void** data, NULL-safe).
+ * Drain iterates entries in FIFO order, invokes user callback, then resets numEntries to 0.
+ * Not thread-safe. Designed for single-threaded init/update registration patterns.
  */
 
 #define QUEUE_INITIAL_CAPACITY 16
 
+/* Allocate queue + initial entries buffer (16 slots). Returns NULL on alloc failure. */
 RecompQueue* RecompQueue_Create() {
     RecompQueue* queue = recomp_alloc(sizeof(RecompQueue));
     if (!queue) return NULL;
@@ -79,9 +35,10 @@ RecompQueue* RecompQueue_Create() {
     return queue;
 }
 
+/* Double capacity: alloc new buffer, zero-fill, copy old entries, free old. Returns false on OOM. */
 bool RecompQueue_Grow(RecompQueue* queue) {
     u16 oldCapacity = queue->capacity;
-    u16 newCapacity = queue->capacity << 1;
+    u16 newCapacity = queue->capacity << 1; // capacity *= 2; u16 max = 65535
     size_t oldSize = sizeof(RecompQueueCmd) * oldCapacity;
     size_t newSize = sizeof(RecompQueueCmd) * newCapacity;
 
@@ -89,8 +46,8 @@ bool RecompQueue_Grow(RecompQueue* queue) {
     if (!newEntries) {
         return false;
     }
-    Lib_MemSet(newEntries, 0, newSize);
-    Lib_MemCpy(newEntries, queue->entries, oldSize);
+    Lib_MemSet(newEntries, 0, newSize);  // MM engine memset
+    Lib_MemCpy(newEntries, queue->entries, oldSize); // MM engine memcpy
     recomp_free(queue->entries);
 
     queue->entries = newEntries;
@@ -98,12 +55,14 @@ bool RecompQueue_Grow(RecompQueue* queue) {
     return true;
 }
 
+/* Free entries array + queue struct. NULL-safe. Does NOT free data ptrs inside entries. */
 void RecompQueue_Destroy(RecompQueue* queue) {
     if (!queue) return;
     recomp_free(queue->entries);
     recomp_free(queue);
 }
 
+/* Append cmd {op, arg0, arg1, *data} to queue. Auto-grows on full. data=NULL stores NULL in union. */
 bool RecompQueue_Push(RecompQueue* queue, u32 op, u32 arg0, u32 arg1, void** data) {
     if (queue->numEntries >= queue->capacity) {
         if (!RecompQueue_Grow(queue)) {
@@ -114,13 +73,15 @@ bool RecompQueue_Push(RecompQueue* queue, u32 op, u32 arg0, u32 arg1, void** dat
     return true;
 }
 
+/* Push only if no existing entry matches (op, arg0, arg1). Prevents duplicate commands. */
 bool RecompQueue_PushIfNotQueued(RecompQueue* queue, u32 op, u32 arg0, u32 arg1, void** data) {
     if (!RecompQueue_IsCmdNotQueued(queue, op, arg0, arg1)) {
-        return false;
+        return false; // duplicate found, skip
     }
     return RecompQueue_Push(queue, op, arg0, arg1, data);
 }
 
+/* Linear scan: returns true if NO entry matches (op, arg0, arg1), false if duplicate exists. */
 bool RecompQueue_IsCmdNotQueued(RecompQueue* queue, u32 op, u32 arg0, u32 arg1) {
     for (s32 i = 0; i < queue->numEntries; i++) {
         RecompQueueCmd* cmd = &queue->entries[i];
@@ -131,6 +92,7 @@ bool RecompQueue_IsCmdNotQueued(RecompQueue* queue, u32 op, u32 arg0, u32 arg1) 
     return true;
 }
 
+/* Process all entries FIFO via drainFunc callback, then reset count to 0 (entries stay allocated). */
 void RecompQueue_Drain(RecompQueue* queue, void (*drainFunc)(RecompQueueCmd* cmd)) {
     for (s32 i = 0; i < queue->numEntries; i++) {
         drainFunc(&queue->entries[i]);
@@ -138,6 +100,7 @@ void RecompQueue_Drain(RecompQueue* queue, void (*drainFunc)(RecompQueueCmd* cmd
     queue->numEntries = 0;
 }
 
+/* Discard all entries without processing. Buffer stays allocated at current capacity. */
 void RecompQueue_Empty(RecompQueue* queue) {
     queue->numEntries = 0;
 }

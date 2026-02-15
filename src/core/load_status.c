@@ -3,26 +3,31 @@
 #include <recomp/recompdata.h>
 #include <recomp/recomputils.h>
 
-/**
- * This file is responsible for keeping track of fake load statuses and cache entries.
+/*
+ * load_status.c — Fake load-status tracking and cache simulation for mod-loaded audio resources.
  *
- * Once a sequence or soundfont is loaded from the ROM, or if was already in RAM from a mod, we
- * could just treat the resource as permanently loaded. However the game does not expect this and
- * it actually breaks things. Additionally, the load status arrays are hardcoded in length so we
- * also need an extended array to keep track of new sequences and soundfonts.
+ * Problem: In vanilla, sequences/soundfonts are DMA'd from ROM into heap pools, and the game
+ * tracks their load state via fixed-size arrays (gAudioCtx.seqLoadStatus/fontLoadStatus). Mod
+ * resources live permanently in RAM (no DMA needed), but the game's logic breaks if resources
+ * appear permanently loaded (e.g. persistent cache pop = sequence stop). The vanilla arrays are
+ * also too small for modded table indices.
  *
- * The permanent cache keeps track of whether the game asked for the resource to be permanently
- * loaded. These entries would normally not be flushed when the audio heap is reset. In vanilla,
- * this is sequence 0, and soundfonts 0 / 1.
+ * Solution: Intercept all load-status and cache-search functions with fakes that behave like
+ * vanilla but back onto extensible data structures. Three caches are maintained:
  *
- * The persistent cache keeps track of whether the game asked the resources to be persistently
- * loaded. These entries are only flushed when explicitely asked to be, or when the audio heap is
- * reset. This is opposed to the temporary cache which has limited entries which are automatically
- * evicted when necessary. The persistent cache is the most important to mock in the same way the
- * vanilla game does since sequences may be stopped by popping entries from this cache.
+ *   Cache       | Backing              | Semantics
+ *   ------------+----------------------+--------------------------------------------------
+ *   permanent   | U32Hashset           | Survives heap reset. Vanilla: seq 0, fonts 0/1.
+ *   persistent  | Stack array (16 max) | LIFO; popped to stop sequences. Flushed on reset.
+ *   loaded      | U32Hashset           | "Ever loaded" flag — prevents double-init of RAM data.
  *
- * The loaded cache keeps track of if we've ever loaded this resource. This is so that we don't call
- * functions that modify the resource more than once on the stored copy in RAM.
+ * Cache keys are encoded as (tableType << 24 | realId) to form a unique u32 per resource.
+ *
+ * Extended load-status arrays (sExtSeqLoadStatus / sExtSoundFontLoadStatus) start as aliases
+ * to the vanilla arrays and are swapped to larger allocations by load.c when tables grow.
+ *
+ * Special IDs: 0xFF and 0xFE are sentinel values used by the game for "no sequence" / "previous
+ * sequence" — these are short-circuited to LOAD_STATUS_PERMANENT to avoid table lookups.
  */
 
 #define MAX_PERSISTENT_CACHE_ENTRIES 16
@@ -38,13 +43,15 @@ typedef struct PersistentCache {
 } PersistentCache;
 
 PersistentCache persistentCache;
-U32HashsetHandle permanentCache;
-U32HashsetHandle loadedCache;
+U32HashsetHandle permanentCache;  /* survives heap reset */
+U32HashsetHandle loadedCache;     /* "ever loaded" — prevents double-init */
 
+/* Initially alias vanilla arrays; load.c replaces these with larger allocations when needed */
 u8* sExtSeqLoadStatus = gAudioCtx.seqLoadStatus;
 u8* sExtSoundFontLoadStatus = gAudioCtx.fontLoadStatus;
 
 extern AudioTable* AudioLoad_GetLoadTable(s32 tableType);
+/* Resolves high-byte bank IDs (0xHH__) to actual table indices */
 extern u32 AudioLoad_GetRealTableIndex(s32 tableType, u32 id);
 
 RECOMP_CALLBACK(".", AudioApi_InitInternal) void AudioApi_LoadStatusInit() {
@@ -53,6 +60,8 @@ RECOMP_CALLBACK(".", AudioApi_InitInternal) void AudioApi_LoadStatusInit() {
 }
 
 // ======== LOAD STATUS FUNCTIONS ========
+// Get/set per-resource load status using the extended arrays.
+// Sentinel IDs (0xFF=none, 0xFE=previous) are treated as always-loaded.
 
 s32 AudioApi_GetTableEntryLoadStatus(s32 tableType, s32 id) {
     if ((id & 0xFF) == 0xFF || (id & 0xFF) == 0xFE) return LOAD_STATUS_PERMANENT;
@@ -80,6 +89,7 @@ void AudioApi_SetTableEntryLoadStatus(s32 tableType, s32 id, s32 status) {
     }
 }
 
+/* Reset all non-permanent entries to NOT_LOADED and clear the persistent cache stack */
 RECOMP_PATCH void AudioHeap_ResetLoadStatus(void) {
     s32 i;
 
@@ -114,6 +124,8 @@ RECOMP_PATCH void AudioLoad_SetFontLoadStatus(s32 fontId, s32 status) {
 }
 
 // ======== FAKE CACHE FUNCTIONS ========
+// Vanilla searches DMA'd heap copies; these return the RAM pointer directly (stored in romAddr
+// field by load.c) if the resource passes the appropriate cache-level check.
 
 RECOMP_PATCH void* AudioHeap_SearchCaches(s32 tableType, s32 cache, s32 id) {
     AudioTable* table = AudioLoad_GetLoadTable(tableType);
@@ -126,6 +138,7 @@ RECOMP_PATCH void* AudioHeap_SearchCaches(s32 tableType, s32 cache, s32 id) {
     if (!recomputil_u32_hashset_contains(loadedCache, key)) {
         return NULL;
     }
+    /* romAddr is repurposed to hold the RAM pointer for mod-loaded resources (KSEG0 = in RAM) */
     if (!IS_KSEG0(table->entries[realId].romAddr)) {
         return NULL;
     }
@@ -140,6 +153,7 @@ RECOMP_PATCH void* AudioHeap_SearchPermanentCache(s32 tableType, s32 id) {
     return AudioHeap_SearchCaches(tableType, CACHE_PERMANENT, id);
 }
 
+/* Register a resource in the appropriate cache tier(s). Called after a successful load. */
 void AudioApi_PushFakeCache(s32 tableType, s32 cachePolicy, s32 id) {
     u32 realId = AudioLoad_GetRealTableIndex(tableType, id);
     u32 key = tableType << 24 | realId;
@@ -167,6 +181,8 @@ void AudioApi_PushFakeCache(s32 tableType, s32 cachePolicy, s32 id) {
     }
 }
 
+/* Pop most-recent persistent entry of tableType (LIFO). This is how the game stops sequences —
+ * it pops the font/seq from persistent cache, marking it unloaded and discarding font data. */
 RECOMP_PATCH void AudioHeap_PopPersistentCache(s32 tableType) {
     PersistentCacheEntry* entry = NULL;
     s32 i;

@@ -5,20 +5,29 @@
 #include <utils/queue.h>
 #include <core/init.h>
 
-/**
- * This file provides the public API for creating and modifying samplebanks
+/*
+ * samplebank.c — Public API for adding/replacing/restoring samplebank table entries.
+ *
+ * Samplebanks are the raw ADPCM sample data that soundfonts reference. The vanilla game has
+ * a fixed AudioTable (gSampleBankTable) with 3 entries. This file lets mods add new banks or
+ * replace existing ones, with the table auto-growing (capacity doubles) when full.
+ *
+ * Follows the standard Audio API queue pattern:
+ *   - During QUEUEING phase: commands are deferred into sampleBankQueue
+ *   - During QUEUED phase (ReadyInternal): queue is drained and destroyed
+ *   - After READY phase: commands execute immediately
  *
  * Note: These functions are not yet tested.
  */
 
-#define NA_SAMPLEBANK_MAX 0x03
+#define NA_SAMPLEBANK_MAX 0x03 /* vanilla table size */
 
 typedef enum {
     AUDIOAPI_CMD_OP_REPLACE_SAMPLEBANK,
 } AudioApiSampleBankQueueOp;
 
 RecompQueue* sampleBankQueue;
-u16 sampleBankTableCapacity = NA_SAMPLEBANK_MAX;
+u16 sampleBankTableCapacity = NA_SAMPLEBANK_MAX; /* current allocated capacity, grows by 2x */
 
 void AudioApi_SampleBankQueueDrain(RecompQueueCmd* cmd);
 bool AudioApi_GrowSampleBankTables();
@@ -32,6 +41,8 @@ RECOMP_CALLBACK(".", AudioApi_ReadyInternal) void AudioApi_SampleBankReady() {
     RecompQueue_Destroy(sampleBankQueue);
 }
 
+/* Append a new samplebank entry to the table. Returns the new bank ID, or -1 on failure.
+ * Caller must set entry->romAddr to a KSEG0 pointer to the ADPCM data in RAM. */
 RECOMP_EXPORT s32 AudioApi_AddSampleBank(AudioTableEntry* entry) {
     if (gAudioApiInitPhase == AUDIOAPI_INIT_NOT_READY) {
         return -1;
@@ -51,6 +62,8 @@ RECOMP_EXPORT s32 AudioApi_AddSampleBank(AudioTableEntry* entry) {
     return newBankId;
 }
 
+/* Replace an existing samplebank entry. During QUEUEING phase, deferred via queue
+ * (entry is heap-copied). PushIfNotQueued ensures only the last replace per bankId wins. */
 RECOMP_EXPORT void AudioApi_ReplaceSampleBank(s32 bankId, AudioTableEntry* entry) {
     if (gAudioApiInitPhase == AUDIOAPI_INIT_NOT_READY) {
         return;
@@ -71,6 +84,8 @@ RECOMP_EXPORT void AudioApi_ReplaceSampleBank(s32 bankId, AudioTableEntry* entry
     gAudioCtx.sampleBankTable->entries[bankId] = *entry;
 }
 
+/* Restore a samplebank entry to its vanilla ROM table value. Only works after READY phase
+ * since it reads from the original gSampleBankTable (not the live gAudioCtx copy). */
 RECOMP_EXPORT void AudioApi_RestoreSampleBank(s32 bankId) {
     if (gAudioApiInitPhase < AUDIOAPI_INIT_READY) {
         return;
@@ -93,6 +108,8 @@ void AudioApi_SampleBankQueueDrain(RecompQueueCmd* cmd) {
     }
 }
 
+/* Double the samplebank table capacity. Allocates a new table via recomp_alloc, copies
+ * existing entries, and frees the old table (if it was also a recomp_alloc). */
 bool AudioApi_GrowSampleBankTables() {
     u16 oldCapacity = sampleBankTableCapacity;
     u16 newCapacity = sampleBankTableCapacity << 1;

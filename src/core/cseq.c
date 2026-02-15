@@ -2,8 +2,50 @@
 #include <recomp/modding.h>
 #include <recomp/recomputils.h>
 
+/*
+ * cseq.c - C API for programmatically building N64 audio sequences (MML bytecode)
+ *
+ * PURPOSE: Allows mods to construct custom audio sequences at runtime without shipping
+ *          pre-compiled .aseq binaries. Sequences are built as a tree of sections, then
+ *          compiled into a flat byte buffer the N64 audio engine can execute.
+ *
+ * N64 SEQUENCE STRUCTURE (3-tier hierarchy):
+ *   Sequence -> Channels (up to 16) -> Layers (up to 4 per channel)
+ *   Each tier has its own bytecode script. The sequence script references channel scripts
+ *   via 16-bit offsets (ldchan), channels reference layers via offsets (ldlayer).
+ *
+ * ARCHITECTURE:
+ *   CSeqContainer (root)
+ *     ├── sections[] - array of CSeqSection (SEQUENCE, CHANNEL, LAYER, LABEL, etc.)
+ *     │    Each section has its own CSeqBuffer for bytecode being written
+ *     ├── patches[]  - deferred offset fixups (source section -> target section)
+ *     └── buffer     - final compiled output after cseq_compile()
+ *
+ * WORKFLOW:
+ *   1. cseq_create()              - allocate container
+ *   2. cseq_sequence_create()     - create sequence section
+ *   3. cseq_channel_create()      - create channel sections
+ *   4. cseq_layer_create()        - create layer sections
+ *   5. cseq_ldchan/ldlayer/etc.   - emit opcodes (auto-registers offset patches for refs)
+ *   6. cseq_compile(root, base)   - concatenate all sections, resolve offset patches
+ *   7. root->buffer->data/size    - final bytecode ready for audio engine
+ *   8. cseq_destroy()             - free everything
+ *
+ * OFFSET PATCHING: When a section references another (ldchan, ldlayer, jump), a placeholder
+ *   u16(0x0000) is written and a CSeqOffsetPatch is registered. cseq_compile() fills in
+ *   the real 16-bit offsets once all section positions are known. Labels are zero-size
+ *   markers into an existing section (for jump targets mid-section).
+ *
+ * BUFFER: All writes are big-endian (N64 native). Variable-length encoding (cseq_buffer_write_var)
+ *   uses MIDI-style: values <0x80 = 1 byte, >=0x80 = 2 bytes with high bit set on first byte.
+ *   Buffers auto-grow by CSEQ_BUFFER_GROW_FACTOR (1.5x) when full.
+ *
+ * All section-creation and opcode functions are RECOMP_EXPORT for mod API access.
+ */
+
 // ======== BUFFER FUNCTIONS ========
 
+/* Allocate a growable byte buffer with initial capacity */
 CSeqBuffer* cseq_buffer_create(size_t capacity) {
     CSeqBuffer* buf = recomp_alloc(sizeof(CSeqBuffer));
     if (!buf) return NULL;
@@ -17,6 +59,7 @@ CSeqBuffer* cseq_buffer_create(size_t capacity) {
     return buf;
 }
 
+/* Realloc buffer to new_capacity (copies existing data, zeroes new space) */
 bool cseq_buffer_grow(CSeqBuffer* buf, size_t new_capacity) {
     if (new_capacity <= buf->capacity) return true;
 
@@ -33,6 +76,7 @@ bool cseq_buffer_grow(CSeqBuffer* buf, size_t new_capacity) {
     return true;
 }
 
+/* Append entire source buffer contents to buf (grows as needed) */
 bool cseq_buffer_append(CSeqBuffer* buf, CSeqBuffer* source) {
     size_t new_capacity = buf->capacity;
     while ((buf->size + source->size) > new_capacity) {
@@ -46,6 +90,7 @@ bool cseq_buffer_append(CSeqBuffer* buf, CSeqBuffer* source) {
     return true;
 }
 
+/* Write single byte, auto-grow if needed */
 bool cseq_buffer_write_u8(CSeqBuffer* buf, u8 val) {
     if (buf->size >= buf->capacity) {
         if (!cseq_buffer_grow(buf, buf->capacity * CSEQ_BUFFER_GROW_FACTOR)) {
@@ -56,11 +101,13 @@ bool cseq_buffer_write_u8(CSeqBuffer* buf, u8 val) {
     return true;
 }
 
+/* Write u16 big-endian (high byte first, N64 native order) */
 bool cseq_buffer_write_u16(CSeqBuffer* buf, u16 val) {
     return cseq_buffer_write_u8(buf, (val >> 8) & 0xFF)
         && cseq_buffer_write_u8(buf, val & 0xFF);
 }
 
+/* Write MIDI-style variable-length: <0x80 = 1 byte, >=0x80 = 2 bytes (0x80|hi, lo) */
 bool cseq_buffer_write_var(CSeqBuffer* buf, u16 val) {
     if (val < 0x80) {
         return cseq_buffer_write_u8(buf, val);
@@ -77,6 +124,7 @@ void cseq_buffer_destroy(CSeqBuffer* buf) {
 
 // ======== CONTAINER FUNCTIONS ========
 
+/* Allocate root container with default-sized buffer, sections array, and patches array */
 RECOMP_EXPORT CSeqContainer* cseq_create() {
     CSeqContainer* root = recomp_alloc(sizeof(CSeqContainer));
     if (!root) return NULL;
@@ -107,6 +155,7 @@ RECOMP_EXPORT CSeqContainer* cseq_create() {
     return NULL;
 }
 
+/* Free container and all owned sections/buffers/patches */
 RECOMP_EXPORT void cseq_destroy(CSeqContainer* root) {
     if (!root) return;
     for (size_t i = 0; i < root->section_count; i++) {
@@ -118,6 +167,8 @@ RECOMP_EXPORT void cseq_destroy(CSeqContainer* root) {
     recomp_free(root);
 }
 
+/* Register a deferred u16 offset fixup: at source+relative_source_offset, write target's final offset.
+ * Called by ldchan/ldlayer/jump when emitting a placeholder 0x0000. Resolved during cseq_compile(). */
 bool cseq_add_offset_patch(CSeqContainer* root, CSeqSection* source, CSeqSection* target,
                                     size_t relative_source_offset) {
     if (root->patch_count >= root->patch_capacity) {
@@ -141,11 +192,16 @@ bool cseq_add_offset_patch(CSeqContainer* root, CSeqSection* source, CSeqSection
     return true;
 }
 
+/* Compile all sections into root->buffer. Two passes:
+ * Pass 1: Concatenate section buffers in order, assigning each section->offset = position
+ *         relative to base_offset. Labels (zero-size markers) are skipped. Sequence sections
+ *         auto-terminated with END opcode if not already ended.
+ * Pass 2: Resolve all offset patches by writing the target's final u16 offset into the
+ *         source's placeholder position. For labels, offset = label's relative pos + parent section's offset. */
 RECOMP_EXPORT void cseq_compile(CSeqContainer* root, size_t base_offset) {
     size_t current_offset = base_offset;
     size_t i;
 
-    // Loop through each section, write to final buffer, and calculate offsets
     for (i = 0; i < root->section_count; i++) {
         CSeqSection* section = &root->sections[i];
         if (section->type == CSEQ_SECTION_LABEL) continue;
@@ -155,7 +211,6 @@ RECOMP_EXPORT void cseq_compile(CSeqContainer* root, size_t base_offset) {
         current_offset += section->buffer->size;
     }
 
-    // Apply patches to final buffer in order to update offset references
     for (i = 0; i < root->patch_count; i++) {
         CSeqOffsetPatch* patch = &root->patches[i];
         size_t patch_offset = patch->source->offset + patch->relative_source_offset;
@@ -170,6 +225,8 @@ RECOMP_EXPORT void cseq_compile(CSeqContainer* root, size_t base_offset) {
 
 // ======== SECTION FUNCTIONS ========
 
+/* Internal: allocate a section of given type in root->sections[]. Labels have no buffer
+ * (they use label_target_section union member instead). Grows sections array if full. */
 CSeqSection* cseq_section_create(CSeqContainer* root, CSeqSectionType type) {
     if (root->section_count >= root->section_capacity) {
         size_t old_capacity = root->section_capacity;
@@ -216,6 +273,8 @@ RECOMP_EXPORT CSeqSection* cseq_layer_create(CSeqContainer* root) {
     return cseq_section_create(root, CSEQ_SECTION_LAYER);
 }
 
+/* Create a label (zero-size jump target) at the current write position within an existing section.
+ * Stores the parent section ref and current buffer offset. Used as target for cseq_jump(). */
 RECOMP_EXPORT CSeqSection* cseq_label_create(CSeqSection* section) {
     if (!section || section->ended) return NULL;
     CSeqSection* label = cseq_section_create(section->root, CSEQ_SECTION_LABEL);
@@ -226,6 +285,7 @@ RECOMP_EXPORT CSeqSection* cseq_label_create(CSeqSection* section) {
     return label;
 }
 
+/* Emit ASEQ_OP_END (0xFF) and mark section as terminated. Called automatically by compile for sequences. */
 RECOMP_EXPORT bool cseq_section_end(CSeqSection* section) {
     if (!section || section->ended) return false;
     section->ended = cseq_buffer_write_u8(section->buffer, ASEQ_OP_END);
@@ -238,6 +298,9 @@ RECOMP_EXPORT void cseq_section_destroy(CSeqSection* section) {
 }
 
 // ======== OPCODE FUNCTIONS ========
+// Each function emits one MML opcode into a section's buffer. All validate section type
+// and ended state. "Common" commands auto-select opcode based on section type (SEQ/CHAN/LAYER).
+// Offset-referencing opcodes (ldchan, ldlayer, jump) write placeholder 0x0000 + register a patch.
 
 // Control flow commands
 
@@ -270,7 +333,7 @@ RECOMP_EXPORT bool cseq_delay1(CSeqSection* section, u16 delay) {
     return cseq_buffer_write_u8(section->buffer, ASEQ_OP_DELAY1);
 }
 
-// Common commands
+// Common commands (polymorphic: auto-select opcode variant based on section type)
 
 RECOMP_EXPORT bool cseq_mutebhv(CSeqSection* section, u8 flags) {
     if (!section || section->ended) return false;
@@ -303,6 +366,8 @@ RECOMP_EXPORT bool cseq_transpose(CSeqSection* section, u8 semitones) {
         && cseq_buffer_write_u8(section->buffer, semitones);
 }
 
+/* Load channel/subchannel script. channelNum encoded in low 3 bits of opcode.
+ * Writes placeholder u16 offset, registers patch to be resolved at compile time. */
 RECOMP_EXPORT bool cseq_ldchan(CSeqSection* section, u8 channelNum, CSeqSection* channel) {
     if (!section || section->ended || !channel) return false;
     u8 op = (section->type == CSEQ_SECTION_SEQUENCE) ? ASEQ_OP_SEQ_LDCHAN
@@ -324,7 +389,7 @@ RECOMP_EXPORT bool cseq_instr(CSeqSection* section, u8 instNum) {
         && cseq_buffer_write_u8(section->buffer, instNum);
 }
 
-// Sequence commands
+// Sequence-only commands (enforce CSEQ_SECTION_SEQUENCE type)
 
 RECOMP_EXPORT bool cseq_volscale(CSeqSection* sequence, u8 arg) {
     if (!sequence || sequence->ended) return false;
@@ -361,7 +426,7 @@ RECOMP_EXPORT bool cseq_tempo(CSeqSection* sequence, u8 bpm) {
         && cseq_buffer_write_u8(sequence->buffer, bpm);
 }
 
-// Channel commands
+// Channel-only commands (enforce CSEQ_SECTION_CHANNEL type)
 
 RECOMP_EXPORT bool cseq_notepri(CSeqSection* section, u8 priority) {
     if (!section || section->ended) return false;
@@ -397,6 +462,7 @@ RECOMP_EXPORT bool cseq_short(CSeqSection* section) {
     return cseq_buffer_write_u8(section->buffer, ASEQ_OP_CHAN_SHORT);
 }
 
+/* Load layer script into channel. layerNum in low 3 bits of opcode. Offset patched at compile. */
 RECOMP_EXPORT bool cseq_ldlayer(CSeqSection* channel, u8 layerNum, CSeqSection* layer) {
     if (!channel || channel->ended || !layer) return false;
     if (channel->type != CSEQ_SECTION_CHANNEL || layer->type != CSEQ_SECTION_LAYER) return false;
@@ -420,7 +486,9 @@ RECOMP_EXPORT bool cseq_panweight(CSeqSection* section, u8 weight) {
 }
 
 
-// Layer commands
+// Layer-only commands (enforce CSEQ_SECTION_LAYER type)
+// Note encoding: pitch is in low 6 bits of opcode byte. delay is variable-length.
+// notedvg = delay+velocity+gate, notedv = delay+velocity, notevg = velocity+gate (reuses last delay)
 
 RECOMP_EXPORT bool cseq_ldelay(CSeqSection* section, u16 delay) {
     if (!section || section->ended) return false;

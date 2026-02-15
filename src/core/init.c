@@ -6,43 +6,69 @@
 #include <core/heap.h>
 #include <core/load.h>
 
-/**
- * This file is responsible for the main Audio API init process. It patches `AudioLoad_Init()`
- * in order to dispactch events at the correct time both internally and for client mods.
+/*
+ * init.c — Patches AudioLoad_Init to insert the Audio API initialization lifecycle.
  *
- * Init status is tracked through `gAudioApiInitPhase`, which will signal to accept or queue commands.
+ * The vanilla AudioLoad_Init sets up the audio heap, tables, and triggers a reset.
+ * This patch injects a 4-phase event system between table init and heap reset:
+ *
+ *   Phase                    | Who runs                    | Purpose
+ *   -------------------------+-----------------------------+----------------------------------
+ *   NOT_READY                | (before events fire)        | Nothing can be queued yet
+ *   AudioApi_InitInternal()  | Internal API callbacks      | Scale effects (effects.c), init
+ *                            |                             | extlib (native C++ side), etc.
+ *   QUEUEING / AudioApi_Init | Client mods (public event)  | Mods queue sequences/soundfonts
+ *   QUEUED / ReadyInternal   | Internal API callbacks      | Drain queued loads, finalize
+ *   READY / AudioApi_Ready   | Client mods (public event)  | Mods interact post-load
+ *
+ * The native (C++) side is managed via RECOMP_IMPORT functions:
+ *   AudioApiNative_Init  — called during InitInternal, sets up extlib thread + VFS
+ *   AudioApiNative_Ready — called during ReadyInternal, signals extlib loading complete
+ *   AudioApiNative_Tick  — called every audio thread update (hooked on AudioThread_UpdateImpl)
  */
 
 extern void AudioLoad_InitTable(AudioTable* table, uintptr_t romAddr, u16 unkMediumParam);
 
 AudioApiInitPhase gAudioApiInitPhase = AUDIOAPI_INIT_NOT_READY;
 
-// Internal queue events
+/* Internal events — API subsystems register RECOMP_CALLBACKs on these (e.g. effects.c, load.c) */
 RECOMP_DECLARE_EVENT(AudioApi_InitInternal());
 RECOMP_DECLARE_EVENT(AudioApi_ReadyInternal());
 
-// Public queue events
+/* Public events — client mods register callbacks to queue/finalize audio data */
 RECOMP_DECLARE_EVENT(AudioApi_Init());
 RECOMP_DECLARE_EVENT(AudioApi_Ready());
 
+/* Native (C++) extlib interface — manages decoder thread, VFS, and resource loading */
 RECOMP_IMPORT(".", bool AudioApiNative_Init(u32 log_level, unsigned char* mod_dir));
 RECOMP_IMPORT(".", bool AudioApiNative_Ready());
 RECOMP_IMPORT(".", bool AudioApiNative_Tick());
 
+/* Boot the native extlib (C++ decoder/VFS layer) during internal init phase */
 RECOMP_CALLBACK(".", AudioApi_InitInternal) void AudioApi_ExtLibInit() {
     unsigned char* mod_folder = recomp_get_mod_folder_path();
-    AudioApiNative_Init(6, mod_folder);
+    AudioApiNative_Init(6, mod_folder); // log_level 6 = verbose
     recomp_free(mod_folder);
 }
 
+/* Signal native side that all queued loads are done */
 RECOMP_CALLBACK(".", AudioApi_ReadyInternal) void AudioApi_ExtLibReady() {
     AudioApiNative_Ready();
 }
 
+/* Per-frame tick for native extlib — drives async decode, resource streaming, etc. */
 RECOMP_HOOK_RETURN("AudioThread_UpdateImpl") void on_AudioThread_UpdateImpl() {
     AudioApiNative_Tick();
 }
 
+/*
+ * Full replacement of AudioLoad_Init. Vanilla flow is preserved (zero ctx, set refresh rate,
+ * init queues, partition heap, connect ROM tables) with these modifications:
+ *   - AI buffer sized for 48kHz (AIBUF_SIZE uses scaled AIBUF_LEN from init.h)
+ *   - initPool shrunk to just AI buffers; remaining heap goes to sessionPool
+ *   - 4-phase event dispatch inserted after table init (see lifecycle table above)
+ *   - Triggers immediate AudioHeap_ResetStep to initialize audio heap with new params
+ */
 RECOMP_PATCH void AudioLoad_Init(void* heap, size_t heapSize) {
     u8* audioCtxPtr;
     void* addr;
