@@ -18,6 +18,7 @@
 
 extern void AudioSeq_ProcessSeqCmd(u32 cmd);
 extern void AudioThread_SetFadeInTimer(s32 seqPlayerIndex, s32 fadeTimer);
+extern AudioTable* AudioLoad_GetLoadTable(s32 tableType);
 
 RecompQueue* sAudioSeqCmdQueue;
 
@@ -39,11 +40,20 @@ RECOMP_HOOK("AudioThread_ProcessGlobalCmd") void AudioApi_ProcessGlobalCmd(Audio
         AudioThread_SetFadeInTimer(cmd->arg0, cmd->opArgs & 0xFFFF);
         break;
 
-    case AUDIOCMD_EXTENDED_OP_GLOBAL_INIT_SEQPLAYER_SKIP_TICKS:
-        AudioLoad_SyncInitSeqPlayerSkipTicks(cmd->arg0, cmd->asInt, cmd->opArgs & 0xFFFF);
-        AudioThread_SetFadeInTimer(cmd->arg0, 500);
-        AudioScript_SkipForwardSequence(&gAudioCtx.seqPlayers[cmd->arg0]);
+    case AUDIOCMD_EXTENDED_OP_GLOBAL_INIT_SEQPLAYER_SKIP_TICKS: {
+        // Custom sequences in mod memory have minimal script structure (single long note),
+        // so skipping ticks would exhaust the sequence. Use normal init with fade-in instead.
+        uintptr_t seqRomAddr = AudioLoad_GetLoadTable(SEQUENCE_TABLE)->entries[cmd->asInt].romAddr;
+        if (IS_KSEG0(seqRomAddr)) {
+            AudioLoad_SyncInitSeqPlayer(cmd->arg0, cmd->asInt, 0);
+            AudioThread_SetFadeInTimer(cmd->arg0, 500);
+        } else {
+            AudioLoad_SyncInitSeqPlayerSkipTicks(cmd->arg0, cmd->asInt, cmd->opArgs & 0xFFFF);
+            AudioThread_SetFadeInTimer(cmd->arg0, 500);
+            AudioScript_SkipForwardSequence(&gAudioCtx.seqPlayers[cmd->arg0]);
+        }
         break;
+    }
 
     case AUDIOCMD_EXTENDED_OP_GLOBAL_DISCARD_SEQ_FONTS:
         AudioLoad_DiscardSeqFonts(cmd->asInt);

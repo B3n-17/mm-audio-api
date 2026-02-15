@@ -83,16 +83,13 @@ RECOMP_EXPORT s32 AudioApi_CreateStreamedSequence(AudioApiFileInfo* info) {
         length = CLAMP(length, 0, 0x7FFF);
     }
 
-    length = lceilf(10.0f *  (TATUMS_PER_BEAT / 60.0f));
-
-
     root = cseq_create();
     seq = cseq_sequence_create(root);
 
     cseq_mutebhv(seq, 0x20);
     cseq_mutescale(seq, 0x32);
+    cseq_vol(seq, 0x7F);
     cseq_initchan(seq, (1 << channelCount) - 1);
-    //cseq_volscale(seq, 0x7F);
 
     label = cseq_label_create(seq);
 
@@ -102,14 +99,14 @@ RECOMP_EXPORT s32 AudioApi_CreateStreamedSequence(AudioApiFileInfo* info) {
         cseq_noshort(chan);
         cseq_panweight(chan, 0);
         cseq_notepri(chan, 1);
-        //cseq_vol(chan, 0x7F);
+        cseq_vol(chan, 0x7F);
 
         if (info->channelType == AUDIOAPI_CHANNEL_TYPE_MONO) {
             layer = cseq_layer_create(root);
             cseq_ldlayer(chan, 0, layer);
             cseq_instr(layer, channelNo);
             cseq_notepan(layer, 0);
-            cseq_notedv(layer, PITCH_C4, length, 50);
+            cseq_notedv(layer, PITCH_C4, length, 127);
             cseq_section_end(layer);
 
         } else if (info->channelType == AUDIOAPI_CHANNEL_TYPE_STEREO) {
@@ -117,14 +114,14 @@ RECOMP_EXPORT s32 AudioApi_CreateStreamedSequence(AudioApiFileInfo* info) {
             cseq_ldlayer(chan, 0, layer);
             cseq_instr(layer, channelNo * 2);
             cseq_notepan(layer, 0);
-            cseq_notedv(layer, PITCH_C4, length, 50);
+            cseq_notedv(layer, PITCH_C4, length, 127);
             cseq_section_end(layer);
 
             layer = cseq_layer_create(root);
             cseq_ldlayer(chan, 1, layer);
             cseq_instr(layer, channelNo * 2 + 1);
             cseq_notepan(layer, 127);
-            cseq_notedv(layer, PITCH_C4, length, 50);
+            cseq_notedv(layer, PITCH_C4, length, 127);
             cseq_section_end(layer);
         }
 
@@ -132,7 +129,6 @@ RECOMP_EXPORT s32 AudioApi_CreateStreamedSequence(AudioApiFileInfo* info) {
         cseq_section_end(chan);
     }
 
-    cseq_vol(seq, 0x7F);
     cseq_tempo(seq, 0x01);
     cseq_delay(seq, length - 1);
 

@@ -68,3 +68,12 @@ data_reference_syms_files = [ "Zelda64RecompSyms/mm.us.rev1.datasyms.toml", "Zel
 additional_files = [
     "thumb.dds"
 ]
+
+# Config options shown in the mod's settings UI.
+[[manifest.config_options]]
+id = "radio_effect_in_shops"
+name = "Radio Effect in Shops"
+description = "Applies a band-pass filter and gain to spatial BGM in shops, simulating a radio playing in the room. Takes effect on the next scene change."
+type = "Enum"
+options = [ "Off", "On" ]
+default = "Off"

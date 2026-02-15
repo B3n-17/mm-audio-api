@@ -395,3 +395,60 @@ RECOMP_HOOK("AudioHeap_ResetStep") void onAudioHeap_ResetStep(void) {
         }
     }
 }
+
+extern void AudioHeap_LoadLowPassFilter(s16* filter, s32 cutoff);
+extern void AudioHeap_LoadHighPassFilter(s16* filter, s32 cutoff);
+
+/**
+ * Fix 3 vanilla bugs in AudioHeap_LoadFilter:
+ * 1. Band-pass filter: gBandPassFilterData[k + i] should be gBandPassFilterData[8 * k + i]
+ * 2. Band-stop filter: gBandStopFilterData[k + i] should be gBandStopFilterData[8 * k + i]
+ * 3. Filter is never set when lowPassCutoff == highPassCutoff (and both != 0)
+ */
+RECOMP_PATCH void AudioHeap_LoadFilter(s16* filter, s32 lowPassCutoff, s32 highPassCutoff) {
+    s32 i;
+    s32 j;
+    s32 k;
+    s32 cutOff;
+
+    if ((lowPassCutoff == 0) && (highPassCutoff == 0)) {
+        // Identity filter
+        AudioHeap_LoadLowPassFilter(filter, 0);
+    } else if (highPassCutoff == 0) {
+        AudioHeap_LoadLowPassFilter(filter, lowPassCutoff);
+    } else if (lowPassCutoff == 0) {
+        AudioHeap_LoadHighPassFilter(filter, highPassCutoff);
+    } else if (lowPassCutoff == highPassCutoff) {
+        // Bug fix: vanilla leaves filter uninitialized in this case
+        AudioHeap_LoadLowPassFilter(filter, lowPassCutoff);
+    } else {
+        k = 0;
+        j = 14;
+
+        cutOff = lowPassCutoff;
+        if (lowPassCutoff < highPassCutoff) {
+            for (i = 1; i < cutOff; i++) {
+                k += j;
+                j--;
+            }
+
+            k += highPassCutoff - lowPassCutoff - 1;
+            for (i = 0; i < 8; i++) {
+                // Bug fix: was gBandStopFilterData[k + i], missing 8* multiplier
+                filter[i] = gBandStopFilterData[8 * k + i];
+            }
+        } else {
+            cutOff = highPassCutoff;
+            for (i = 1; i < cutOff; i++) {
+                k += j;
+                j--;
+            }
+
+            k += lowPassCutoff - highPassCutoff - 1;
+            for (i = 0; i < 8; i++) {
+                // Bug fix: was gBandPassFilterData[k + i], missing 8* multiplier
+                filter[i] = gBandPassFilterData[8 * k + i];
+            }
+        }
+    }
+}

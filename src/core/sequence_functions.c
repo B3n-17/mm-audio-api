@@ -4,6 +4,7 @@
 #include <core/audio_cmd.h>
 
 #include <recomp/recomputils.h>
+#include <recomp/recompconfig.h>
 
 /**
  * This file patches various functions found in sequence.c and code_8019AF00.c in order to support
@@ -126,6 +127,22 @@ u16 sExtRequestedSceneSeqArgs = 0x0000;
 u16 sExtFanfareSeqArgs        = 0x0000;
 u16 sExtPrevAmbienceSeqArgs   = 0x0000;
 u16 sExtPrevMainBgmSeqArgs    = 0x0000;
+
+// When enabled, shops use the vanilla radio effect (band-pass filter + gain compensation)
+// for spatial BGM. Cached and refreshed on soundtrack change for performance.
+u8 sRadioEffectInShops = false;
+
+static void AudioApi_RefreshRadioEffectSetting(void) {
+    sRadioEffectInShops = recomp_get_config_u32("radio_effect_in_shops") != 0;
+}
+
+RECOMP_EXPORT void AudioApi_SetRadioEffectInShops(u8 enabled) {
+    sRadioEffectInShops = enabled;
+}
+
+RECOMP_EXPORT u8 AudioApi_GetRadioEffectInShops(void) {
+    return sRadioEffectInShops;
+}
 
 RECOMP_DECLARE_EVENT(AudioApi_SequenceStarted(s8 seqPlayerIndex, s32 seqId, u16 seqArgs, u16 fadeInDuration));
 
@@ -327,17 +344,24 @@ RECOMP_EXPORT void AudioApi_PlayObjSoundBgm(Vec3f* pos, s32 seqId) {
             Audio_SetObjSoundProperties(SEQ_PLAYER_BGM_MAIN, pos, 0x20, 100.0f, 1500.0f, 0.9f, 0.0f);
         } else {
             if (sExtObjSoundMainBgmSeqId == NA_BGM_GENERAL_SFX) {
+                AudioApi_RefreshRadioEffectSetting();
                 fadeInDuration = ((AudioThread_NextRandom() % 30) & 0xFF) + 1;
                 SEQCMD_EXTENDED_PLAY_SEQUENCE(SEQ_PLAYER_BGM_MAIN, fadeInDuration, 0x7F00, seqId);
                 sExtObjSoundMainBgmSeqId = seqId;
             }
 
             if (seqId == NA_BGM_MILK_BAR_DUPLICATE) {
+                // 0x1E3: surround + pan + volume + pan_weight_40 + reverb_index + reverb_volume
                 Audio_SetObjSoundProperties(SEQ_PLAYER_BGM_MAIN, pos, 0x1E3, 0.0f, 600.0f, 0.9f, 0.55f);
             } else if (seqId == NA_BGM_MILK_BAR) {
-                Audio_SetObjSoundProperties(SEQ_PLAYER_BGM_MAIN, pos, 0x1FF, 0.0f, 600.0f, 0.9f, 0.55f);
+                // 0x1FF: all flags; 0x1E7: same but without filter (0x08) + gain (0x10)
+                s16 milkBarFlags = sRadioEffectInShops ? 0x1FF : 0x1E7;
+                Audio_SetObjSoundProperties(SEQ_PLAYER_BGM_MAIN, pos, milkBarFlags, 0.0f, 600.0f, 0.9f, 0.55f);
             } else {
-                Audio_SetObjSoundProperties(SEQ_PLAYER_BGM_MAIN, pos, 0x3F, 0.0f, 600.0f, 0.9f, 0.55f);
+                // 0x27: surround + pan + pan_weight_7F + volume
+                // 0x3F: adds filter (0x08) + gain (0x10) for radio effect
+                s16 objFlags = sRadioEffectInShops ? 0x3F : 0x27;
+                Audio_SetObjSoundProperties(SEQ_PLAYER_BGM_MAIN, pos, objFlags, 0.0f, 600.0f, 0.9f, 0.55f);
             }
         }
     } else {
@@ -485,6 +509,7 @@ RECOMP_PATCH void Audio_PlaySubBgmAtPos(Vec3f* pos, u8 seqId, f32 maxDist) {
 
 // Used only by guru guru for song of storms in stock pot from hallway or neighboring room
 RECOMP_EXPORT void AudioApi_PlaySubBgmAtPosWithFilter(Vec3f* pos, u8 seqId, f32 maxDist) {
+    AudioApi_RefreshRadioEffectSetting();
     sSpatialSeqFilterPos.x = pos->x;
     sSpatialSeqFilterPos.y = pos->y;
     sSpatialSeqFilterPos.z = pos->z;
@@ -505,8 +530,10 @@ RECOMP_PATCH void Audio_UpdateSubBgmAtPos(void) {
             AudioApi_StartSubBgmAtPos(SEQ_PLAYER_BGM_SUB, &sSpatialSeqNoFilterPos, sExtSpatialSeqSeqId, 0x20,
                                       100.0f, sSpatialSeqMaxDist, 1.0f);
         } else {
-            // Set volume with band-pass filter
-            AudioApi_StartSubBgmAtPos(SEQ_PLAYER_BGM_SUB, &sSpatialSeqFilterPos, sExtSpatialSeqSeqId, 0x28,
+            // 0x26: pan + pan_weight_7F + volume (stereo spatial)
+            // 0x28: filter + volume (vanilla radio effect)
+            u8 subFlags = sRadioEffectInShops ? 0x28 : 0x26;
+            AudioApi_StartSubBgmAtPos(SEQ_PLAYER_BGM_SUB, &sSpatialSeqFilterPos, sExtSpatialSeqSeqId, subFlags,
                                       100.0f, sSpatialSeqMaxDist, 1.0f);
         }
 
