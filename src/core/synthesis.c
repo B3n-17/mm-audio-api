@@ -623,8 +623,9 @@ RECOMP_PATCH Acmd* AudioSynth_ProcessSample(s32 noteIndex, NoteSampleState* samp
 
                         flags = A_CONTINUE;
                         skipBytes = 0;
-                        numSamplesProcessed += MIN(numSamplesToProcess, numSamplesUntilEnd);
-                        dmemUncompressedAddrOffset1 += numSamplesProcessed * SAMPLE_SIZE;
+                        s32 numSamplesThisIter = MIN(numSamplesToProcess, numSamplesUntilEnd);
+                        numSamplesProcessed += numSamplesThisIter;
+                        dmemUncompressedAddrOffset1 += numSamplesThisIter * SAMPLE_SIZE;
                         goto skip;
 
                     default:

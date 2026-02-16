@@ -37,8 +37,11 @@ RecompQueue* RecompQueue_Create() {
 
 /* Double capacity: alloc new buffer, zero-fill, copy old entries, free old. Returns false on OOM. */
 bool RecompQueue_Grow(RecompQueue* queue) {
+    if (queue->capacity >= 0x8000) {
+        return false;
+    }
     u16 oldCapacity = queue->capacity;
-    u16 newCapacity = queue->capacity << 1; // capacity *= 2; u16 max = 65535
+    u16 newCapacity = queue->capacity << 1;
     size_t oldSize = sizeof(RecompQueueCmd) * oldCapacity;
     size_t newSize = sizeof(RecompQueueCmd) * newCapacity;
 

@@ -330,6 +330,7 @@ RECOMP_EXPORT bool cseq_delay(CSeqSection* section, u16 delay) {
 
 RECOMP_EXPORT bool cseq_delay1(CSeqSection* section, u16 delay) {
     if (!section || section->ended) return false;
+    if (delay != 1) return cseq_delay(section, delay);
     return cseq_buffer_write_u8(section->buffer, ASEQ_OP_DELAY1);
 }
 

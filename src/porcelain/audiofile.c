@@ -198,7 +198,8 @@ RECOMP_EXPORT s32 AudioApi_CreateStreamedSequence(AudioApiFileInfo* info) {
     return seqId;
 }
 
-/* High-level: load audio file → create infinite-loop sequence for background music. */
+/* High-level: load audio file → create infinite-loop sequence for background music.
+ * Caller may set info->loopCount before calling; if left at 0 (default), loops infinitely. */
 RECOMP_EXPORT s32 AudioApi_CreateStreamedBgm(AudioApiFileInfo* info, char* dir, char* filename) {
     AudioApiFileInfo defaultInfo = {0};
 
@@ -216,12 +217,16 @@ RECOMP_EXPORT s32 AudioApi_CreateStreamedBgm(AudioApiFileInfo* info, char* dir, 
             : AUDIOAPI_CHANNEL_TYPE_STEREO;
     }
 
-    info->loopCount = -1;
+    if (info->loopCount == 0) {
+        info->loopCount = -1;
+    }
 
     return AudioApi_CreateStreamedSequence(info);
 }
 
-/* High-level: load audio file → create one-shot sequence flagged as fanfare (ducks BGM). */
+/* High-level: load audio file → create one-shot sequence flagged as fanfare (ducks BGM).
+ * Caller may set info->loopCount before calling; if left at 0 (default), plays once.
+ * Set loopCount=-1 for looping fanfares (e.g. Bremen March). */
 RECOMP_EXPORT s32 AudioApi_CreateStreamedFanfare(AudioApiFileInfo* info, char* dir, char* filename) {
     AudioApiFileInfo defaultInfo = {0};
     s32 seqId;
@@ -239,8 +244,6 @@ RECOMP_EXPORT s32 AudioApi_CreateStreamedFanfare(AudioApiFileInfo* info, char* d
             ? AUDIOAPI_CHANNEL_TYPE_MONO
             : AUDIOAPI_CHANNEL_TYPE_STEREO;
     }
-
-    info->loopCount = 0;
 
     seqId = AudioApi_CreateStreamedSequence(info);
     if (seqId == -1) {

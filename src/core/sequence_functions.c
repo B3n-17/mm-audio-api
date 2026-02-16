@@ -1029,7 +1029,7 @@ RECOMP_PATCH void Audio_SetSequenceMode(u8 seqMode) {
     u8 seqFlags = AudioApi_GetSequenceFlagsInternal(seqId);
 
     s32 subSeqId = AudioApi_GetActiveSeqId(SEQ_PLAYER_BGM_SUB);
-    u8 subSeqFlags = AudioApi_GetSequenceFlagsInternal(seqId);
+    u8 subSeqFlags = AudioApi_GetSequenceFlagsInternal(subSeqId);
 
     if (sExtPrevMainBgmSeqId == NA_BGM_DISABLED) {
         if (sAudioCutsceneFlag || sSpatialSeqIsActive[SEQ_PLAYER_BGM_SUB]) {

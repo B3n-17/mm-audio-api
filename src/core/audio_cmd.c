@@ -152,7 +152,7 @@ void AudioApi_ProcessSeqCmd(RecompQueueCmd* cmd) {
         /* QUEUE: Insert seq into sExtSeqRequests[] sorted by priority (descending).
          * If already queued and first -> play immediately. If new and inserted at index 0 -> play.
          * If queue full, lowest-priority entry is evicted. priority = seqArgs byte. */
-        seqId = cmd->op == SEQCMD_EXTENDED_OP_PLAY_SEQUENCE ? cmd->asInt : (cmd->arg0 & SEQCMD_SEQID_MASK);
+        seqId = cmd->op == SEQCMD_EXTENDED_OP_QUEUE_SEQUENCE ? cmd->asInt : (cmd->arg0 & SEQCMD_SEQID_MASK);
         seqArgs = (cmd->arg0 & 0xFF00) >> 8;
         fadeTimer = (cmd->arg0 & 0xFF0000) >> 13;
         priority = seqArgs;
@@ -195,7 +195,7 @@ void AudioApi_ProcessSeqCmd(RecompQueueCmd* cmd) {
     case SEQCMD_EXTENDED_OP_UNQUEUE_SEQUENCE:
         /* UNQUEUE: Remove seq from sExtSeqRequests[], shift remaining entries forward.
          * If removed seq was at index 0 (currently playing), stop it and start next in queue. */
-        seqId = cmd->op == SEQCMD_EXTENDED_OP_PLAY_SEQUENCE ? cmd->asInt : (cmd->arg0 & SEQCMD_SEQID_MASK);
+        seqId = cmd->op == SEQCMD_EXTENDED_OP_UNQUEUE_SEQUENCE ? cmd->asInt : (cmd->arg0 & SEQCMD_SEQID_MASK);
         fadeTimer = (cmd->arg0 & 0xFF0000) >> 13;
 
         found = sNumSeqRequests[seqPlayerIndex];
