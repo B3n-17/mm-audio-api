@@ -1,7 +1,6 @@
 #pragma once
 
 #include <filesystem>
-#include <fstream>
 #include <memory>
 #include <mutex>
 #include <shared_mutex>
@@ -39,7 +38,7 @@ private:
     void* mz_archive;
     size_t filesize;
     fs::path path;
-    std::ifstream stream;
+    std::vector<uint8_t> data;
     std::mutex mutex;
 
     std::unordered_map<std::string, FileInfo> fileList;

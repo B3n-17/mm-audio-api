@@ -58,7 +58,9 @@ void Audiofile::probe() {
 std::shared_ptr<std::vector<int16_t>> Audiofile::getChunk(size_t offset) {
     try {
         std::shared_lock<std::shared_mutex> cacheLock(cacheMutex);
-        return cache.at(offset);
+        auto chunk = cache.at(offset);
+        atime.store(std::chrono::steady_clock::now());
+        return chunk;
     } catch (const std::out_of_range& e) {
         if (gMainThreadId == std::this_thread::get_id()) {
             PLOG_DEBUG << "Cache miss " << offset;
@@ -104,6 +106,7 @@ void Audiofile::dma(uint8_t* rdram, int32_t ptr, size_t offset, size_t count, ui
     }
 
     pos.store(offset);
+    atime.store(std::chrono::steady_clock::now());
 }
 
 std::vector<PreloadTask> Audiofile::getPreloadTasks() {
@@ -130,6 +133,14 @@ std::vector<PreloadTask> Audiofile::getPreloadTasks() {
         if (offset >= metadata->sampleCount) {
             offset = CHUNK_START(metadata->loopStart);
         }
+
+        {
+            std::shared_lock<std::shared_mutex> cacheLock(cacheMutex);
+            if (cache.contains(offset)) {
+                continue;
+            }
+        }
+
         tasks.emplace_back(i, offset);
     }
 
@@ -155,7 +166,6 @@ void Audiofile::runPreloadTask(const PreloadTask& task) {
         getChunk(offset);
     }
 
-    close();
 }
 
 void Audiofile::gc() {

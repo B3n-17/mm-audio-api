@@ -1,5 +1,10 @@
 #include <extlib/vfs/zip_archive.hpp>
 
+#include <algorithm>
+#include <cstring>
+#include <fstream>
+#include <stdexcept>
+
 #define MINIZ_NO_STDIO
 #define MINIZ_NO_DEFLATE_APIS
 #include <miniz.h>
@@ -11,6 +16,7 @@ enum {
     MZ_ZIP_LOCAL_DIR_HEADER_SIZE = 30,
     MZ_ZIP_LDH_FILENAME_LEN_OFS = 26,
     MZ_ZIP_LDH_EXTRA_LEN_OFS = 28,
+    MZ_STORE = 0,
     MZ_ZSTD = 93,
 };
 
@@ -18,16 +24,22 @@ std::unordered_map<fs::path, std::shared_ptr<ZipArchive>> ZipArchive::cache;
 std::shared_mutex ZipArchive::cacheMutex;
 
 ZipArchive::ZipArchive(ZipArchive::Private, fs::path path)
-    : path(path), stream(path, std::ios::binary | std::ios::ate) {
+    : path(path) {
 
-    stream.exceptions(std::ifstream::badbit);
+    std::ifstream stream(path, std::ios::binary | std::ios::ate);
 
     if (!stream.is_open()) {
         throw std::runtime_error("Could not open zip file");
     }
 
     filesize = static_cast<size_t>(stream.tellg());
-    stream.seekg(0);
+    stream.seekg(0, std::ios::beg);
+
+    data.resize(filesize);
+    stream.read(reinterpret_cast<char*>(data.data()), filesize);
+    if (stream.fail() && !stream.eof()) {
+        throw std::runtime_error("Could not read zip file");
+    }
 }
 
 std::shared_ptr<ZipArchive> ZipArchive::checkCache(fs::path path) {
@@ -108,16 +120,10 @@ ZipArchive::FileInfo ZipArchive::locateFile(std::string path) {
 
     auto info = FileInfo{ index, stat.m_uncomp_size };
 
-    if (stat.m_comp_size == stat.m_uncomp_size) {
+    if (stat.m_method == MZ_STORE) {
         char localDirHeader[30];
 
-        stream.seekg(stat.m_local_header_ofs, std::ios_base::beg);
-        stream.read(localDirHeader, sizeof(localDirHeader));
-
-        if (stream.eof()) {
-            stream.clear();
-        }
-        if (stream.fail()) {
+        if (extractBytesToBuffer(localDirHeader, sizeof(localDirHeader), stat.m_local_header_ofs) != sizeof(localDirHeader)) {
             throw std::runtime_error("Zip archive error: Failed to read local dir header");
         }
 
@@ -162,35 +168,27 @@ void ZipArchive::extractFileToBuffer(std::string path, std::vector<uint8_t>& buf
 }
 
 size_t ZipArchive::extractBytesToBuffer(void* buffer, size_t bytes, size_t offset) {
-    std::lock_guard<std::mutex> lock(mutex);
-
-    stream.seekg(offset, std::ios_base::beg);
-    stream.read(reinterpret_cast<char*>(buffer), bytes);
-
-    if (stream.eof()) {
-        stream.clear();
-    }
-    if (stream.fail()) {
-        throw std::runtime_error("Read operation failed: " + path.string());
+    if (offset >= data.size()) {
+        return 0;
     }
 
-    return static_cast<size_t>(stream.gcount());
+    size_t bytesToRead = std::min(bytes, data.size() - offset);
+    std::memcpy(buffer, data.data() + offset, bytesToRead);
+
+    return bytesToRead;
 }
 
 size_t ZipArchive::onRead(void* datasrc, mz_uint64 offset, void* buffer, size_t bytes) {
     auto that = static_cast<ZipArchive*>(datasrc);
 
-    that->stream.seekg(offset, std::ios_base::beg);
-    that->stream.read(reinterpret_cast<char*>(buffer), bytes);
-
-    if (that->stream.eof()) {
-        that->stream.clear();
-    }
-    if (that->stream.fail()) {
-        throw std::runtime_error("Read operation failed: " + that->path.string());
+    if (offset >= that->data.size()) {
+        return 0;
     }
 
-    return static_cast<size_t>(that->stream.gcount());
+    size_t bytesToRead = std::min(bytes, that->data.size() - static_cast<size_t>(offset));
+    std::memcpy(buffer, that->data.data() + static_cast<size_t>(offset), bytesToRead);
+
+    return bytesToRead;
 }
 
 } // namespace Vfs
