@@ -50,6 +50,11 @@ typedef enum : u32 {
     AUDIOAPI_CHANNEL_TYPE_STEREO,
 } AudioApiChannelType;
 
+typedef enum : u32 {
+    AUDIOAPI_SEQ_IO_NONE,          // No special IO channels
+    AUDIOAPI_SEQ_IO_BREMEN,        // Channel 15, IO port 0: cycles 0x00/0x08/0x10/0x18/0x20
+} AudioApiSequenceIO;
+
 typedef struct AudioApiFileInfo {
     u32 resourceId;
     u32 trackCount;

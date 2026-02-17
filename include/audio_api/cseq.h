@@ -105,6 +105,8 @@ RECOMP_IMPORT("magemods_audio_api", bool cseq_short(CSeqSection* section));
 RECOMP_IMPORT("magemods_audio_api", bool cseq_ldlayer(CSeqSection* channel, u8 layerNum, CSeqSection* layer));
 RECOMP_IMPORT("magemods_audio_api", bool cseq_pan(CSeqSection* section, u8 pan));
 RECOMP_IMPORT("magemods_audio_api", bool cseq_panweight(CSeqSection* section, u8 weight));
+RECOMP_IMPORT("magemods_audio_api", bool cseq_setval(CSeqSection* section, u8 value));
+RECOMP_IMPORT("magemods_audio_api", bool cseq_stio(CSeqSection* section, u8 port));
 
 // Layer commands
 RECOMP_IMPORT("magemods_audio_api", bool cseq_ldelay(CSeqSection* section, u16 delay));

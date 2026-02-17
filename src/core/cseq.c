@@ -226,7 +226,9 @@ RECOMP_EXPORT void cseq_compile(CSeqContainer* root, size_t base_offset) {
 // ======== SECTION FUNCTIONS ========
 
 /* Internal: allocate a section of given type in root->sections[]. Labels have no buffer
- * (they use label_target_section union member instead). Grows sections array if full. */
+ * (they use label_target_section union member instead). Grows sections array if full.
+ * IMPORTANT: After growing, all pointers into the old sections array (in patches and labels)
+ * must be rebased to the new array, since realloc changes the base address. */
 CSeqSection* cseq_section_create(CSeqContainer* root, CSeqSectionType type) {
     if (root->section_count >= root->section_capacity) {
         size_t old_capacity = root->section_capacity;
@@ -234,16 +236,31 @@ CSeqSection* cseq_section_create(CSeqContainer* root, CSeqSectionType type) {
         size_t old_size = old_capacity * sizeof(CSeqSection);
         size_t new_size = new_capacity * sizeof(CSeqSection);
 
+        CSeqSection* old_sections = root->sections;
         CSeqSection* new_sections = recomp_alloc(new_size);
         if (!new_sections) {
             return NULL;
         }
         Lib_MemSet(new_sections, 0, new_size);
-        Lib_MemCpy(new_sections, root->sections, old_size);
+        Lib_MemCpy(new_sections, old_sections, old_size);
 
-        recomp_free(root->sections);
         root->sections = new_sections;
         root->section_capacity = new_capacity;
+
+        /* Rebase all pointers that reference the old sections array */
+        for (size_t i = 0; i < root->patch_count; i++) {
+            CSeqOffsetPatch* patch = &root->patches[i];
+            patch->source = &new_sections[patch->source - old_sections];
+            patch->target = &new_sections[patch->target - old_sections];
+        }
+        for (size_t i = 0; i < root->section_count; i++) {
+            if (new_sections[i].type == CSEQ_SECTION_LABEL) {
+                new_sections[i].label_target_section =
+                    &new_sections[new_sections[i].label_target_section - old_sections];
+            }
+        }
+
+        recomp_free(old_sections);
     }
 
     CSeqSection* section = &root->sections[root->section_count];
@@ -367,7 +384,7 @@ RECOMP_EXPORT bool cseq_transpose(CSeqSection* section, u8 semitones) {
         && cseq_buffer_write_u8(section->buffer, semitones);
 }
 
-/* Load channel/subchannel script. channelNum encoded in low 3 bits of opcode.
+/* Load channel/subchannel script. channelNum encoded in low nibble of opcode.
  * Writes placeholder u16 offset, registers patch to be resolved at compile time. */
 RECOMP_EXPORT bool cseq_ldchan(CSeqSection* section, u8 channelNum, CSeqSection* channel) {
     if (!section || section->ended || !channel) return false;
@@ -376,7 +393,7 @@ RECOMP_EXPORT bool cseq_ldchan(CSeqSection* section, u8 channelNum, CSeqSection*
         : 0xFF;
     if (op == 0xFF) return false;
     cseq_add_offset_patch(section->root, section, channel, section->buffer->size + 1);
-    return cseq_buffer_write_u8(section->buffer, op | (channelNum & 0x7))
+    return cseq_buffer_write_u8(section->buffer, op | (channelNum & 0xF))
         && cseq_buffer_write_u16(section->buffer, 0x0000);
 }
 
@@ -486,6 +503,26 @@ RECOMP_EXPORT bool cseq_panweight(CSeqSection* section, u8 weight) {
         && cseq_buffer_write_u8(section->buffer, weight);
 }
 
+
+/* ldi: set script register value. Seq=0xCC, Chan=0xCC (same opcode, context-dependent). */
+RECOMP_EXPORT bool cseq_setval(CSeqSection* section, u8 value) {
+    if (!section || section->ended) return false;
+    if (section->type != CSEQ_SECTION_SEQUENCE && section->type != CSEQ_SECTION_CHANNEL) return false;
+    return cseq_buffer_write_u8(section->buffer, ASEQ_OP_CHAN_LDI)
+        && cseq_buffer_write_u8(section->buffer, value);
+}
+
+/* stio: store script register to IO port.
+ * Seq: 0x70 | (port & 0xF). Chan: 0x70 | (port & 0x7). */
+RECOMP_EXPORT bool cseq_stio(CSeqSection* section, u8 port) {
+    if (!section || section->ended) return false;
+    if (section->type == CSEQ_SECTION_SEQUENCE) {
+        return cseq_buffer_write_u8(section->buffer, ASEQ_OP_SEQ_STIO | (port & 0xF));
+    } else if (section->type == CSEQ_SECTION_CHANNEL) {
+        return cseq_buffer_write_u8(section->buffer, ASEQ_OP_CHAN_STIO | (port & 0x7));
+    }
+    return false;
+}
 
 // Layer-only commands (enforce CSEQ_SECTION_LAYER type)
 // Note encoding: pitch is in low 6 bits of opcode byte. delay is variable-length.

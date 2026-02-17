@@ -9,7 +9,7 @@
  * CreateStreamedSequence(info) — The engine of this file:
  *   1. Creates an empty soundfont and adds one Instrument per audio track, each pointing
  *      to a DMA-backed Sample at the file's native sample rate (tuned via sampleRate/32000).
- *   2. Computes sequence length in tatums (48 per beat @ 1 BPM tempo).
+ *   2. Computes sequence length in tatums (48 per beat @ 25 BPM = 20 tatums/sec = 1 per frame).
  *   3. Builds a CSeq (compiled sequence) with:
  *      - One channel per mono track, or one channel per stereo pair (L=layer0 pan0, R=layer1 pan127)
  *      - Each channel plays one note (C4) for the full duration at max velocity
@@ -41,12 +41,14 @@ RECOMP_IMPORT(".", s32 AudioApi_AddAudioFileFromFs(AudioApiFileInfo* info, char*
 RECOMP_IMPORT(".", uintptr_t AudioApi_GetResourceDevAddr(u32 resourceId, u32 arg1, u32 arg2));
 
 /* Builds a sequence + soundfont from a previously-loaded audio file described by info.
+ * seqIO selects optional IO channel behavior (e.g. AUDIOAPI_SEQ_IO_BREMEN for march sync).
  * Returns seqId on success, -1 on failure. Caller must have already loaded the audio resource. */
-RECOMP_EXPORT s32 AudioApi_CreateStreamedSequence(AudioApiFileInfo* info) {
+RECOMP_EXPORT s32 AudioApi_CreateStreamedSequence(AudioApiFileInfo* info, AudioApiSequenceIO seqIO) {
     u32 channelCount, trackCount;
     u32 channelNo, trackNo;
     s32 seqId, fontId;
     u16 length;
+    u16 initChanMask, freeChanMask;
     uintptr_t sampleAddr;
     AdpcmLoop sampleLoop;
     Sample sample;
@@ -59,6 +61,7 @@ RECOMP_EXPORT s32 AudioApi_CreateStreamedSequence(AudioApiFileInfo* info) {
     CSeqSection* chan;
     CSeqSection* layer;
     CSeqSection* label;
+    CSeqSection* ioLabel;
 
     if (info == NULL) {
         return -1;
@@ -108,13 +111,14 @@ RECOMP_EXPORT s32 AudioApi_CreateStreamedSequence(AudioApiFileInfo* info) {
         AudioApi_AddInstrument(fontId, &inst);
     }
 
-    /* Step 2: Compute note duration in tatums (48/beat @ 1 BPM → 48 tatums/sec @ tempo=1).
+    /* Step 2: Compute note duration in tatums.
+     * At 25 BPM with 48 tatums/beat: 20 tatums/sec (= 1 tatum per game frame at 20 FPS).
      * Infinite loop → max length (0x7FFF). Finite → ceil(duration_sec * tatums_per_sec). */
     if (info->loopCount == -1) {
         length = 0x7FFF;
     } else {
         length = lceilf((info->loopCount + 1) * ((f32)info->sampleCount / info->sampleRate) *
-                        (TATUMS_PER_BEAT / 60.0f));
+                        (TATUMS_PER_BEAT * 25.0f / 60.0f));
         length = CLAMP(length, 0, 0x7FFF);
     }
 
@@ -122,10 +126,18 @@ RECOMP_EXPORT s32 AudioApi_CreateStreamedSequence(AudioApiFileInfo* info) {
     root = cseq_create();
     seq = cseq_sequence_create(root);
 
+    initChanMask = (1 << channelCount) - 1;
+    freeChanMask = initChanMask;
+
+    if (seqIO != AUDIOAPI_SEQ_IO_NONE && channelCount < 16) {
+        initChanMask |= (1 << 15);
+        freeChanMask |= (1 << 15);
+    }
+
     cseq_mutebhv(seq, 0x20);   /* mute behavior: stop notes */
     cseq_mutescale(seq, 0x32); /* mute scale: 50 */
     cseq_vol(seq, 0x7F);      /* max volume */
-    cseq_initchan(seq, (1 << channelCount) - 1); /* enable all channels */
+    cseq_initchan(seq, initChanMask);
 
     label = cseq_label_create(seq);
 
@@ -165,18 +177,49 @@ RECOMP_EXPORT s32 AudioApi_CreateStreamedSequence(AudioApiFileInfo* info) {
         cseq_section_end(chan);
     }
 
-    cseq_tempo(seq, 0x01);       /* 1 BPM — timing controlled by note length, not tempo */
+    /* Channel 15: IO pulse generator for actor synchronization.
+     * func_801A46F8 returns true when IO port 0 is any of {0, 8, 16, 24, 32}.
+     * func_801A3950 resets port 0 to SEQ_IO_VAL_NONE after reading.
+     * Actors check on specific frames, so we write a valid value as frequently as
+     * possible (delay=1 per write) to minimize the window where IO[0] is empty. */
+    if (seqIO == AUDIOAPI_SEQ_IO_BREMEN && channelCount < 16) {
+        chan = cseq_channel_create(root);
+        cseq_ldchan(seq, 15, chan);
+        cseq_vol(chan, 0);
+
+        ioLabel = cseq_label_create(chan);
+
+        cseq_setval(chan, 0x00);
+        cseq_stio(chan, 0);
+        cseq_delay1(chan, 1);
+
+        cseq_jump(chan, ioLabel);
+    }
+
+    cseq_tempo(seq, 25);         /* 25 BPM → 20 tatums/sec → 1 tatum per game frame at 20 FPS */
     cseq_delay(seq, length - 1); /* wait for playback to finish */
 
     if (info->loopCount == -1) {
         cseq_jump(seq, label);   /* infinite loop: jump back to start */
     }
 
-    cseq_freechan(seq, (1 << channelCount) - 1);
+    cseq_freechan(seq, freeChanMask);
     cseq_section_end(seq);
 
     /* Step 4: Compile CSeq to binary, copy to persistent allocation, register as sequence. */
     cseq_compile(root, 0);
+
+    /* DEBUG: dump compiled sequence */
+    {
+        size_t i;
+        recomp_printf("[Bremen] seqIO=%d channelCount=%d initChanMask=0x%04X seqSize=%d\n",
+            seqIO, channelCount, initChanMask, (int)root->buffer->size);
+        recomp_printf("[Bremen] seq hex: ");
+        for (i = 0; i < root->buffer->size && i < 128; i++) {
+            recomp_printf("%02X ", root->buffer->data[i]);
+        }
+        recomp_printf("\n");
+    }
 
     seqSize = root->buffer->size;
     seqData = recomp_alloc(seqSize);
@@ -221,13 +264,15 @@ RECOMP_EXPORT s32 AudioApi_CreateStreamedBgm(AudioApiFileInfo* info, char* dir, 
         info->loopCount = -1;
     }
 
-    return AudioApi_CreateStreamedSequence(info);
+    return AudioApi_CreateStreamedSequence(info, AUDIOAPI_SEQ_IO_NONE);
 }
 
 /* High-level: load audio file → create one-shot sequence flagged as fanfare (ducks BGM).
  * Caller may set info->loopCount before calling; if left at 0 (default), plays once.
- * Set loopCount=-1 for looping fanfares (e.g. Bremen March). */
-RECOMP_EXPORT s32 AudioApi_CreateStreamedFanfare(AudioApiFileInfo* info, char* dir, char* filename) {
+ * Set loopCount=-1 for looping fanfares (e.g. Bremen March).
+ * seqIO selects optional IO channel behavior (e.g. AUDIOAPI_SEQ_IO_BREMEN for march sync). */
+RECOMP_EXPORT s32 AudioApi_CreateStreamedFanfare(AudioApiFileInfo* info, char* dir, char* filename,
+                                                  AudioApiSequenceIO seqIO) {
     AudioApiFileInfo defaultInfo = {0};
     s32 seqId;
 
@@ -245,7 +290,16 @@ RECOMP_EXPORT s32 AudioApi_CreateStreamedFanfare(AudioApiFileInfo* info, char* d
             : AUDIOAPI_CHANNEL_TYPE_STEREO;
     }
 
-    seqId = AudioApi_CreateStreamedSequence(info);
+    recomp_printf("[Fanfare] after load: loopCount=%d loopStart=%u loopEnd=%u sampleCount=%u\n",
+        info->loopCount, info->loopStart, info->loopEnd, info->sampleCount);
+
+    /* Fanfares default to play-once. Only loop if file metadata has loop tags
+     * (loopCount becomes -1 from probe) or caller pre-set loopCount to -1. */
+    if (info->loopCount == 0) {
+        info->loopCount = 0;
+    }
+
+    seqId = AudioApi_CreateStreamedSequence(info, seqIO);
     if (seqId == -1) {
         return -1;
     }

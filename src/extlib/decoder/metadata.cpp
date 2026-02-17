@@ -322,7 +322,9 @@ void Metadata::findLoopPoints() {
         }
     }
 
-    setLoopInfo(start, end, count);
+    if (start != 0 || end != 0) {
+        setLoopInfo(start, end, count);
+    }
 }
 
 } // namespace Decoder

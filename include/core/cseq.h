@@ -8,8 +8,8 @@
 #include <global.h>
 #include <audio/aseq.h>
 
-#define CSEQ_DEFAULT_SEQUENCE_SECTION_CAPACITY 8
-#define CSEQ_DEFAULT_SEQUENCE_PATCH_CAPACITY 8
+#define CSEQ_DEFAULT_SEQUENCE_SECTION_CAPACITY 64
+#define CSEQ_DEFAULT_SEQUENCE_PATCH_CAPACITY 64
 #define CSEQ_DEFAULT_SEQUENCE_BUFFER_SIZE 1024
 #define CSEQ_DEFAULT_SECTION_BUFFER_SIZE 16
 #define CSEQ_BUFFER_GROW_FACTOR 1.5f
@@ -106,6 +106,8 @@ bool cseq_short(CSeqSection* section);
 bool cseq_ldlayer(CSeqSection* channel, u8 layerNum, CSeqSection* layer);
 bool cseq_pan(CSeqSection* section, u8 pan);
 bool cseq_panweight(CSeqSection* section, u8 weight);
+bool cseq_setval(CSeqSection* section, u8 value);
+bool cseq_stio(CSeqSection* section, u8 port);
 
 // Layer commands
 bool cseq_ldelay(CSeqSection* section, u16 delay);
