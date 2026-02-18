@@ -45,7 +45,7 @@ RECOMP_IMPORT(".", uintptr_t AudioApi_GetResourceDevAddr(u32 resourceId, u32 arg
  * Returns seqId on success, -1 on failure. Caller must have already loaded the audio resource. */
 RECOMP_EXPORT s32 AudioApi_CreateStreamedSequence(AudioApiFileInfo* info, AudioApiSequenceIO seqIO) {
     u32 channelCount, trackCount;
-    u32 channelNo, trackNo;
+    u32 channelNo, trackNo, i;
     s32 seqId, fontId;
     u16 length;
     u16 initChanMask, freeChanMask;
@@ -177,23 +177,49 @@ RECOMP_EXPORT s32 AudioApi_CreateStreamedSequence(AudioApiFileInfo* info, AudioA
         cseq_section_end(chan);
     }
 
-    /* Channel 15: IO pulse generator for actor synchronization.
-     * func_801A46F8 returns true when IO port 0 is any of {0, 8, 16, 24, 32}.
-     * func_801A3950 resets port 0 to SEQ_IO_VAL_NONE after reading.
-     * Actors check on specific frames, so we write a valid value as frequently as
-     * possible (delay=1 per write) to minimize the window where IO[0] is empty. */
-    if (seqIO == AUDIOAPI_SEQ_IO_BREMEN && channelCount < 16) {
+    /* Channel 15: IO port writer for game engine synchronization.
+     * Mode depends on seqIO:
+     *   BREMEN:    Tight loop writing 0x00 to IO_PORT_0 every tatum (march actor sync).
+     *   CREDITS_1: 8 timed cue pulses for credits part 1 scene transitions.
+     *   CREDITS_2: 12 timed cue pulses for credits part 2 scene transitions.
+     * Credits delay values are pre-converted from the original variable-tempo sequences
+     * to fixed 25 BPM (20 tatums/sec). See vanillaSequenceBehavior.md for derivation. */
+    if (seqIO != AUDIOAPI_SEQ_IO_NONE && channelCount < 16) {
         chan = cseq_channel_create(root);
         cseq_ldchan(seq, 15, chan);
         cseq_vol(chan, 0);
 
-        ioLabel = cseq_label_create(chan);
+        if (seqIO == AUDIOAPI_SEQ_IO_BREMEN) {
+            ioLabel = cseq_label_create(chan);
 
-        cseq_setval(chan, 0x00);
-        cseq_stio(chan, 0);
-        cseq_delay1(chan, 1);
+            cseq_setval(chan, 0x00);
+            cseq_stio(chan, 0);
+            cseq_delay1(chan, 1);
 
-        cseq_jump(chan, ioLabel);
+            cseq_jump(chan, ioLabel);
+
+        } else if (seqIO == AUDIOAPI_SEQ_IO_CREDITS_1) {
+            /* seq_116: 8 cue writes to IO_PORT_0 = 0 at converted timings */
+            static const u16 credits1Delays[] = { 414, 566, 300, 300, 300, 300, 349, 8 };
+
+            for (i = 0; i < ARRAY_COUNT(credits1Delays); i++) {
+                cseq_delay(chan, credits1Delays[i]);
+                cseq_setval(chan, 0x00);
+                cseq_stio(chan, 0);
+            }
+            cseq_section_end(chan);
+
+        } else if (seqIO == AUDIOAPI_SEQ_IO_CREDITS_2) {
+            /* seq_127: 12 cue writes to IO_PORT_0 = 0 at converted timings */
+            static const u16 credits2Delays[] = { 258, 300, 300, 300, 279, 300, 300, 300, 309, 929, 411, 1067 };
+
+            for (i = 0; i < ARRAY_COUNT(credits2Delays); i++) {
+                cseq_delay(chan, credits2Delays[i]);
+                cseq_setval(chan, 0x00);
+                cseq_stio(chan, 0);
+            }
+            cseq_section_end(chan);
+        }
     }
 
     cseq_tempo(seq, 25);         /* 25 BPM → 20 tatums/sec → 1 tatum per game frame at 20 FPS */
@@ -268,8 +294,8 @@ RECOMP_EXPORT s32 AudioApi_CreateStreamedBgm(AudioApiFileInfo* info, char* dir, 
 }
 
 /* High-level: load audio file → create one-shot sequence flagged as fanfare (ducks BGM).
- * Caller may set info->loopCount before calling; if left at 0 (default), plays once.
- * Set loopCount=-1 for looping fanfares (e.g. Bremen March).
+ * Loop metadata from the file is ignored — fanfares always play once.
+ * Exception: AUDIOAPI_SEQ_IO_BREMEN forces infinite loop (march needs continuous playback).
  * seqIO selects optional IO channel behavior (e.g. AUDIOAPI_SEQ_IO_BREMEN for march sync). */
 RECOMP_EXPORT s32 AudioApi_CreateStreamedFanfare(AudioApiFileInfo* info, char* dir, char* filename,
                                                   AudioApiSequenceIO seqIO) {
@@ -290,12 +316,11 @@ RECOMP_EXPORT s32 AudioApi_CreateStreamedFanfare(AudioApiFileInfo* info, char* d
             : AUDIOAPI_CHANNEL_TYPE_STEREO;
     }
 
-    recomp_printf("[Fanfare] after load: loopCount=%d loopStart=%u loopEnd=%u sampleCount=%u\n",
-        info->loopCount, info->loopStart, info->loopEnd, info->sampleCount);
-
-    /* Fanfares default to play-once. Only loop if file metadata has loop tags
-     * (loopCount becomes -1 from probe) or caller pre-set loopCount to -1. */
-    if (info->loopCount == 0) {
+    /* Fanfares play once by default — ignore loop metadata from the file.
+     * Only loop if seqIO requires it (e.g. Bremen March needs infinite playback). */
+    if (seqIO == AUDIOAPI_SEQ_IO_BREMEN) {
+        info->loopCount = -1;
+    } else {
         info->loopCount = 0;
     }
 

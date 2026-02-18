@@ -1300,26 +1300,3 @@ RECOMP_HOOK_RETURN("AudioSeq_UpdateActiveSequences") void AudioApi_UpdateActiveS
     }
 }
 
-/* DEBUG: Patch func_801A3950 to log channel 15 IO state */
-RECOMP_PATCH u8 func_801A3950(u8 seqPlayerIndex, u8 resetChannelIO) {
-    u8 ret = SEQ_IO_VAL_NONE;
-    SequenceChannel* channel = gAudioCtx.seqPlayers[seqPlayerIndex].channels[15];
-
-    recomp_printf("[Bremen] func_801A3950: player=%d enabled=%d ch15_enabled=%d\n",
-        seqPlayerIndex,
-        gAudioCtx.seqPlayers[seqPlayerIndex].enabled,
-        channel->enabled);
-
-    if (gAudioCtx.seqPlayers[seqPlayerIndex].enabled && channel->enabled) {
-        recomp_printf("[Bremen] ch15 IO[0]=%d (0x%02X)\n",
-            (s8)channel->seqScriptIO[0], (u8)channel->seqScriptIO[0]);
-
-        if (channel->seqScriptIO[0] != SEQ_IO_VAL_NONE) {
-            ret = channel->seqScriptIO[0];
-            if (resetChannelIO == true) {
-                SEQCMD_SET_CHANNEL_IO(seqPlayerIndex, 15, 0, (u8)SEQ_IO_VAL_NONE);
-            }
-        }
-    }
-    return ret;
-}

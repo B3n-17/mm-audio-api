@@ -16,9 +16,11 @@ Relevant for understanding what behavior must be replicated when replacing seque
 These sequences read an IO port once at startup to select a playback path. Simple to handle: just pass the right IO value before playing.
 
 ### seq_2 — `NA_BGM_TERMINA_FIELD`
+IMPLEMENTED
 
 - **Port**: IO_PORT_0 (Read)
 - **Behavior**: Value 1 = normal start (load all channels). Other = alternate entry point (different arrangement, likely daytime-without-melody variant for subsequent loops).
+- **Note**: Intro is Morning Jingle (handled via NB_BGM_MORNING). Ignore in audio versions.
 
 ```asm
 ldio   IO_PORT_0
@@ -28,9 +30,11 @@ rjump  SEQ_003D    ; else → alternate entry
 ```
 
 ### seq_24 — `NA_BGM_FILE_SELECT`
+IMPLEMENTED
 
 - **Port**: IO_PORT_7 (Read)
 - **Behavior**: Value 1 = skip tempo intro (resume). Value 0 = play with gradual tempo ramp-up (50→120 BPM).
+- **Note**: No handling requried since alternate version has it's own index: NA_BGM_FAIRY_FOUNTAIN
 
 ```asm
 ldio   IO_PORT_7
@@ -40,6 +44,7 @@ rbeqz  SEQ_004F    ; IO_PORT_7 == 1 → skip tempo intro
 ```
 
 ### seq_29 — `NA_BGM_CLOCK_TOWN_MAIN_SEQUENCE`
+IMPLEMENTED
 
 Meta-sequence that launches one of three Clock Town day themes.
 
@@ -48,6 +53,7 @@ Meta-sequence that launches one of three Clock Town day themes.
   - IO_PORT_0 = 1: Full startup (load channels, then proceed). Other: skip to variant selection.
   - IO_PORT_4: Encodes target sequence ID as `value + 235`. So IO_PORT_4 = 21 → seq 21 (Day 1), 22 → Day 2, 23 → Day 3.
   - Dynamically patches a `runseq` command via `stseq`.
+- **Note**: Ignore, each day has its own index.
 
 ```asm
 ldio   IO_PORT_0
@@ -115,13 +121,14 @@ rbeqz  SEQ_0029      ; == 93 → vol 85
 ; default → vol 85
 ```
 
-**Impact**: For streamed replacement, need either one audio file per instrument variant, or a single version ignoring timbre differences.
+**Impact**: TODO: Implement soundtrack selection based on IO
 
 ## Interactive Music (game reads/writes IO during playback)
 
 These sequences have ongoing bidirectional IO with the game engine during playback. Most complex to handle when replacing with streamed audio.
 
 ### seq_54 — `NA_BGM_ZORA_HALL`
+BACKLOG
 
 The most complex non-SFX IO usage in the game.
 
@@ -150,7 +157,7 @@ SEQ_004C: ldi 2; stio IO_PORT_3; /* chorus, delay 1536, → outro */
 SEQ_0062: ldi 3; stio IO_PORT_3; /* outro, delay 1536, → loops to verse */
 ```
 
-**Impact**: Must replicate IO_PORT_3 writes at correct section timings if replacing. IO_PORT_7 input determines which section to start at.
+**Note**: Can be ignored for now. Prevents playing from start after leaving the musicians rooms. TODO: Low Prio, add intro skip via marker.
 
 ### seq_77 — `NA_BGM_NEW_WAVE_BOSSA_NOVA`
 
@@ -175,9 +182,10 @@ stopchan 13
 stopchan 14
 ```
 
-**Impact**: Need 3 pre-rendered stems (full, sax-only, vocals-only) or a single full mix.
+**Impact**: TODO: Need 3 pre-rendered stems (full, sax-only, vocals-only) + a full mix.
 
-### seq_83 — `NA_BGM_BREMEN_MARCH` ★ (our current focus)
+### seq_83 — `NA_BGM_BREMEN_MARCH`
+IMPLEMENTED
 
 Channel 15 polls chick count and derives sync values for actor behavior.
 
@@ -227,7 +235,7 @@ ldio IO_PORT_4; and 4; rbeqz → stopchan 2  ; bit 2 → mute bass
 ldio IO_PORT_4; and 8; rbeqz → stopchan 3  ; bit 3 → mute guitar
 ```
 
-**Impact**: Needs 4 separate audio stems (one per instrument) to replicate the muting behavior, or a single full mix if muting is not needed.
+**Impact**: Needs 4 separate audio stems (one per instrument) to replicate the muting behavior + complete mix.
 
 ### seq_90 — `NA_BGM_FROG_SONG`
 
@@ -266,16 +274,47 @@ Channel 15 (silent, invalid instrument) writes IO_PORT_0 = 0 at precise timing o
 ### seq_116 — `NA_BGM_END_CREDITS` (part 1)
 
 - **Port**: IO_PORT_0 (Write)
-- **Cue timings** (in ticks from start): 1488, +2200, +1176, +1176, +1176, +1176, +1368, +1176, +32 → end
-- **7 cue pulses** total.
+- **Consumer**: `CutsceneCmd_ChooseCreditsScenes` in z_demo.c reads via `func_801A3950(SEQ_PLAYER_BGM_MAIN, true)`. Triggers scene transition when value != 0xFF.
+- **Tempo**: Variable (50 → 115 → 109 → 100 → 90 → 80 → 70 → 98 BPM). Final stable tempo is 98 BPM.
+- **Total duration**: ~126.9s (~2:07)
+- **8 cue writes**, channel 15 delays (tatums) and real-time positions:
+
+| Cue | Delay (tatums) | Cumulative | Real time | @25 BPM delay |
+|-----|---------------|------------|-----------|---------------|
+| 1 | 1488 | 1488 | 20.71s | 414 |
+| 2 | 2200 | 3688 | 49.02s | 566 |
+| 3 | 1176 | 4864 | 64.02s | 300 |
+| 4 | 1176 | 6040 | 79.02s | 300 |
+| 5 | 1176 | 7216 | 94.02s | 300 |
+| 6 | 1176 | 8392 | 109.02s | 300 |
+| 7 | 1368 | 9760 | 126.46s | 349 |
+| 8 | 32 | 9792 | 126.87s | 8 |
+
+- After cue 8: `runseq` launches seq_127 (Credits Part 2).
 
 ### seq_127 — `NA_BGM_END_CREDITS_SECOND_HALF` (part 2)
 
 - **Port**: IO_PORT_0 (Write)
-- **Cue timings** (in ticks from start): 1188, +1380, +1380, +1380, +1284, +1380, +1380, +1380, +1224, +3648, +1185, +3247 → end
-- **12 cue pulses** total.
+- **Tempo**: Variable (115 → 109 → 100 → 89 → 80 → 75 → 70 → 64 → 100 → 70 → 100 BPM).
+- **Total duration**: ~252.7s (~4:13)
+- **12 cue writes**, channel 15 delays (tatums) and real-time positions:
 
-**Impact**: Must emit IO_PORT_0 = 0 signals at the exact same timing offsets if replacing with streamed audio, or credits visuals will desync.
+| Cue | Delay (tatums) | Cumulative | Real time | @25 BPM delay |
+|-----|---------------|------------|-----------|---------------|
+| 1 | 1188 | 1188 | 12.91s | 258 |
+| 2 | 1380 | 2568 | 27.91s | 300 |
+| 3 | 1380 | 3948 | 42.91s | 300 |
+| 4 | 1380 | 5328 | 57.91s | 300 |
+| 5 | 1284 | 6612 | 71.87s | 279 |
+| 6 | 1380 | 7992 | 86.87s | 300 |
+| 7 | 1380 | 9372 | 101.87s | 300 |
+| 8 | 1380 | 10752 | 116.87s | 300 |
+| 9 | 1224 | 11976 | 132.32s | 309 |
+| 10 | 3648 | 15624 | 178.76s | 929 |
+| 11 | 1185 | 16809 | 199.28s | 411 |
+| 12 | 3247 | 20056 | 252.67s | 1067 |
+
+**Impact**: Must emit IO_PORT_0 = 0 signals at the exact same real-time offsets if replacing with streamed audio, or credits visuals will desync. The "@25 BPM delay" column gives the pre-computed delay values for use in a meta-sequence running at 25 BPM (20 tatums/sec).
 
 ## Summary: IO Port Roles Across All Sequences
 

@@ -52,7 +52,9 @@ typedef enum : u32 {
 
 typedef enum : u32 {
     AUDIOAPI_SEQ_IO_NONE,          // No special IO channels
-    AUDIOAPI_SEQ_IO_BREMEN,        // Channel 15, IO port 0: cycles 0x00/0x08/0x10/0x18/0x20
+    AUDIOAPI_SEQ_IO_BREMEN,        // Channel 15, IO port 0: writes 0x00 every tatum (march sync)
+    AUDIOAPI_SEQ_IO_CREDITS_1,     // Channel 15, IO port 0: 8 cue pulses for credits part 1 scene transitions
+    AUDIOAPI_SEQ_IO_CREDITS_2,     // Channel 15, IO port 0: 12 cue pulses for credits part 2 scene transitions
 } AudioApiSequenceIO;
 
 typedef struct AudioApiFileInfo {
