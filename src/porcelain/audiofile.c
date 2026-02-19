@@ -39,6 +39,7 @@
 /* Imported from resource.c porcelain layer (same mod) */
 RECOMP_IMPORT(".", s32 AudioApi_AddAudioFileFromFs(AudioApiFileInfo* info, char* dir, char* filename));
 RECOMP_IMPORT(".", uintptr_t AudioApi_GetResourceDevAddr(u32 resourceId, u32 arg1, u32 arg2));
+RECOMP_IMPORT(".", void AudioApi_SetWindfishReplacementSeqId(s32 seqId));
 
 /* Builds a sequence + soundfont from a previously-loaded audio file described by info.
  * seqIO selects optional IO channel behavior (e.g. AUDIOAPI_SEQ_IO_BREMEN for march sync).
@@ -129,7 +130,9 @@ RECOMP_EXPORT s32 AudioApi_CreateStreamedSequence(AudioApiFileInfo* info, AudioA
     initChanMask = (1 << channelCount) - 1;
     freeChanMask = initChanMask;
 
-    if (seqIO != AUDIOAPI_SEQ_IO_NONE && channelCount < 16) {
+    if ((seqIO == AUDIOAPI_SEQ_IO_BREMEN ||
+         seqIO == AUDIOAPI_SEQ_IO_CREDITS_1 ||
+         seqIO == AUDIOAPI_SEQ_IO_CREDITS_2) && channelCount < 16) {
         initChanMask |= (1 << 15);
         freeChanMask |= (1 << 15);
     }
@@ -184,7 +187,9 @@ RECOMP_EXPORT s32 AudioApi_CreateStreamedSequence(AudioApiFileInfo* info, AudioA
      *   CREDITS_2: 12 timed cue pulses for credits part 2 scene transitions.
      * Credits delay values are pre-converted from the original variable-tempo sequences
      * to fixed 25 BPM (20 tatums/sec). See vanillaSequenceBehavior.md for derivation. */
-    if (seqIO != AUDIOAPI_SEQ_IO_NONE && channelCount < 16) {
+    if ((seqIO == AUDIOAPI_SEQ_IO_BREMEN ||
+         seqIO == AUDIOAPI_SEQ_IO_CREDITS_1 ||
+         seqIO == AUDIOAPI_SEQ_IO_CREDITS_2) && channelCount < 16) {
         chan = cseq_channel_create(root);
         cseq_ldchan(seq, 15, chan);
         cseq_vol(chan, 0);
@@ -327,6 +332,10 @@ RECOMP_EXPORT s32 AudioApi_CreateStreamedFanfare(AudioApiFileInfo* info, char* d
     seqId = AudioApi_CreateStreamedSequence(info, seqIO);
     if (seqId == -1) {
         return -1;
+    }
+
+    if (seqIO == AUDIOAPI_SEQ_IO_WINDFISH) {
+        AudioApi_SetWindfishReplacementSeqId(seqId);
     }
 
     AudioApi_SetSequenceFlags(seqId, SEQ_FLAG_FANFARE);

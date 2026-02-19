@@ -77,6 +77,7 @@
 #define SEQ_FLAG_NO_AMBIENCE (1 << 7)
 #define SEQ_RESUME_POINT_NONE 0xC0
 #define AMBIENCE_CHANNEL_PROPERTIES_ENTRIES_MAX 33
+#define SEQ_FONT_ENTRY_SIZE 5
 
 #define NB_BGM_MORNING 128
 
@@ -170,6 +171,10 @@ u16 sExtRequestedSceneSeqArgs = 0x0000;
 u16 sExtFanfareSeqArgs        = 0x0000;
 u16 sExtPrevAmbienceSeqArgs   = 0x0000;
 u16 sExtPrevMainBgmSeqArgs    = 0x0000;
+s32 sWindfishReplacementSeqId = NA_BGM_DISABLED;
+AudioTableEntry sWindfishReplacementEntry;
+u8 sWindfishReplacementFontEntry[SEQ_FONT_ENTRY_SIZE];
+bool sWindfishReplacementReady = false;
 
 // When enabled, shops use the vanilla radio effect (band-pass filter + gain compensation)
 // for spatial BGM. Cached and refreshed on soundtrack change for performance.
@@ -992,6 +997,53 @@ RECOMP_PATCH void Audio_PlayFanfare(u16 seqId) {
     AudioApi_PlayFanfare(seqId & 0xFF, seqId & 0xFF00);
 }
 
+RECOMP_EXPORT void AudioApi_SetWindfishReplacementSeqId(s32 seqId) {
+    s32 fontIndex;
+
+    sWindfishReplacementSeqId = seqId;
+
+    if (seqId < 0 || seqId >= gAudioCtx.sequenceTable->header.numEntries) {
+        sWindfishReplacementReady = false;
+        return;
+    }
+
+    sWindfishReplacementEntry = gAudioCtx.sequenceTable->entries[seqId];
+    fontIndex = ((u16*)gAudioCtx.sequenceFontTable)[seqId];
+    Lib_MemCpy(sWindfishReplacementFontEntry, &gAudioCtx.sequenceFontTable[fontIndex], SEQ_FONT_ENTRY_SIZE);
+    sWindfishReplacementReady = true;
+}
+
+RECOMP_PATCH void Audio_PlayFanfareWithPlayerIOCustomPort(u16 seqId, s8 ioPort, u8 ioData) {
+    s32 extSeqId = seqId & 0xFF;
+    u16 seqArgs = seqId & 0xFF00;
+
+    if (extSeqId == NA_BGM_BALLAD_OF_THE_WIND_FISH && ioPort == SEQ_PLAYER_IO_PORT_4 &&
+        sWindfishReplacementSeqId != NA_BGM_DISABLED && sWindfishReplacementReady) {
+        s32 runtimeFontIndex = ((u16*)gAudioCtx.sequenceFontTable)[NA_BGM_BALLAD_OF_THE_WIND_FISH];
+
+        if (ioData != 0) {
+            s32 vanillaFontIndex = ((u16*)gSequenceFontTable)[NA_BGM_BALLAD_OF_THE_WIND_FISH];
+            AudioTable* origTable = (AudioTable*)gSequenceTable;
+
+            // Partial lineup: restore original Ballad entry and fonts.
+            gAudioCtx.sequenceTable->entries[NA_BGM_BALLAD_OF_THE_WIND_FISH] =
+                origTable->entries[NA_BGM_BALLAD_OF_THE_WIND_FISH];
+            Lib_MemCpy(&gAudioCtx.sequenceFontTable[runtimeFontIndex],
+                       &gSequenceFontTable[vanillaFontIndex],
+                       SEQ_FONT_ENTRY_SIZE);
+        } else {
+            // Full lineup: restore the streamed replacement into Ballad's slot.
+            gAudioCtx.sequenceTable->entries[NA_BGM_BALLAD_OF_THE_WIND_FISH] = sWindfishReplacementEntry;
+            Lib_MemCpy(&gAudioCtx.sequenceFontTable[runtimeFontIndex],
+                       sWindfishReplacementFontEntry,
+                       SEQ_FONT_ENTRY_SIZE);
+        }
+    }
+
+    SEQCMD_SET_SEQPLAYER_IO(SEQ_PLAYER_FANFARE, ioPort, ioData);
+    AudioApi_PlayFanfare(extSeqId, seqArgs);
+}
+
 
 RECOMP_PATCH void Audio_UpdateFanfare(void) {
     if (sFanfareState != 0) {
@@ -1299,4 +1351,3 @@ RECOMP_HOOK_RETURN("AudioSeq_UpdateActiveSequences") void AudioApi_UpdateActiveS
         }
     }
 }
-

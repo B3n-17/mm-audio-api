@@ -75,6 +75,11 @@ void AudioScript_SequencePlayerSetupChannels(SequencePlayer* seqPlayer, u16 chan
 void* AudioLoad_SyncLoadFont(u32 fontId);
 u8* AudioLoad_SyncLoadSeq(s32 seqId);
 u32 AudioLoad_GetRealTableIndex(s32 tableType, u32 id);
+extern s32 sWindfishReplacementSeqId;
+
+static inline s32 AudioApi_GetSeqPlayerSeqIdRaw(SequencePlayer* seqPlayer) {
+    return sExtSeqPlayersSeqId[seqPlayer->playerIndex];
+}
 
 
 RECOMP_EXPORT void AudioApi_SetSeqPlayerSeqId(SequencePlayer* seqPlayer, s32 seqId) {
@@ -82,7 +87,18 @@ RECOMP_EXPORT void AudioApi_SetSeqPlayerSeqId(SequencePlayer* seqPlayer, s32 seq
     seqPlayer->seqId = seqId < 0x100 ? seqId : NA_BGM_UNKNOWN;
 }
 RECOMP_EXPORT s32 AudioApi_GetSeqPlayerSeqId(SequencePlayer* seqPlayer) {
-    return sExtSeqPlayersSeqId[seqPlayer->playerIndex];
+    s32 seqId = AudioApi_GetSeqPlayerSeqIdRaw(seqPlayer);
+
+    if (seqPlayer->playerIndex == SEQ_PLAYER_FANFARE &&
+        seqId == NA_BGM_BALLAD_OF_THE_WIND_FISH &&
+        sWindfishReplacementSeqId != NA_BGM_DISABLED &&
+        seqPlayer->seqScriptIO[4] != 0) {
+        // Hide vanilla Ballad from external sequence-based channel volume mods during
+        // partial-band playback so they don't apply dual-audio even/odd muting.
+        return sWindfishReplacementSeqId;
+    }
+
+    return seqId;
 }
 
 RECOMP_PATCH s32 AudioLoad_SyncInitSeqPlayerInternal(s32 playerIndex, s32 seqId, s32 arg2) {
@@ -147,7 +163,7 @@ RECOMP_PATCH void AudioScript_SequencePlayerDisable(SequencePlayer* seqPlayer) {
     seqPlayer->finished = true;
 
     // @mod Use our seqId getter function
-    s32 seqId = AudioApi_GetSeqPlayerSeqId(seqPlayer);
+    s32 seqId = AudioApi_GetSeqPlayerSeqIdRaw(seqPlayer);
     if (AudioLoad_IsSeqLoadComplete(seqId)) {
         AudioLoad_SetSeqLoadStatus(seqId, LOAD_STATUS_DISCARDABLE);
     }
@@ -166,7 +182,7 @@ RECOMP_PATCH void AudioScript_SequencePlayerDisable(SequencePlayer* seqPlayer) {
 RECOMP_PATCH void AudioHeap_DiscardSequence(s32 seqId) {
     // @mod Use our seqId getter function
     for (s32 i = 0; i < gAudioCtx.audioBufferParameters.numSequencePlayers; i++) {
-        if (gAudioCtx.seqPlayers[i].enabled && AudioApi_GetSeqPlayerSeqId(&gAudioCtx.seqPlayers[i]) == seqId) {
+        if (gAudioCtx.seqPlayers[i].enabled && AudioApi_GetSeqPlayerSeqIdRaw(&gAudioCtx.seqPlayers[i]) == seqId) {
             AudioScript_SequencePlayerDisable(&gAudioCtx.seqPlayers[i]);
         }
     }
@@ -185,7 +201,7 @@ RECOMP_PATCH void AudioScript_SequenceChannelProcessScript(SequenceChannel* chan
     }
 
     seqPlayer = channel->seqPlayer;
-    seqId = AudioApi_GetSeqPlayerSeqId(seqPlayer);
+    seqId = AudioApi_GetSeqPlayerSeqIdRaw(seqPlayer);
     if (seqPlayer->muted && (channel->muteFlags & MUTE_FLAGS_STOP_SCRIPT)) {
         return;
     }
@@ -833,7 +849,7 @@ RECOMP_PATCH void AudioScript_SequencePlayerProcessSequence(SequencePlayer* seqP
     SequenceChannel* channel;
     u16* new_var;
     s32 delay;
-    s32 seqId = AudioApi_GetSeqPlayerSeqId(seqPlayer);
+    s32 seqId = AudioApi_GetSeqPlayerSeqIdRaw(seqPlayer);
 
     if (!seqPlayer->enabled) {
         return;
