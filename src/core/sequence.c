@@ -67,6 +67,7 @@ typedef enum {
 
 RecompQueue* sequenceQueue;
 u16 sequenceTableCapacity = NA_BGM_MAX;
+static bool sLoggedFrogSongReplaceIgnore = false;
 
 void AudioApi_SequenceQueueDrain(RecompQueueCmd* cmd);
 bool AudioApi_GrowSequenceTables();
@@ -119,6 +120,13 @@ RECOMP_EXPORT s32 AudioApi_AddSequence(AudioTableEntry* entry) {
 /* Overwrites an existing sequence table entry. During QUEUEING: heap-copies entry and enqueues. */
 RECOMP_EXPORT void AudioApi_ReplaceSequence(s32 seqId, AudioTableEntry* entry) {
     if (gAudioApiInitPhase == AUDIOAPI_INIT_NOT_READY) {
+        return;
+    }
+    if (seqId == NA_BGM_FROG_SONG) {
+        if (!sLoggedFrogSongReplaceIgnore) {
+            recomp_printf("AudioApi: Ignoring replacement for NA_BGM_FROG_SONG (seq_90)\n");
+            sLoggedFrogSongReplaceIgnore = true;
+        }
         return;
     }
     if (gAudioApiInitPhase == AUDIOAPI_INIT_QUEUEING) {
@@ -197,6 +205,9 @@ RECOMP_EXPORT s32 AudioApi_AddSequenceFont(s32 seqId, s32 fontId) {
  * Font index is stored reversed: entry[numFonts - fontNum]. Queueable. */
 RECOMP_EXPORT void AudioApi_ReplaceSequenceFont(s32 seqId, s32 fontNum, s32 fontId) {
     if (gAudioApiInitPhase == AUDIOAPI_INIT_NOT_READY) {
+        return;
+    }
+    if (seqId == NA_BGM_FROG_SONG) {
         return;
     }
     if (gAudioApiInitPhase == AUDIOAPI_INIT_QUEUEING) {

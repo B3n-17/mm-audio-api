@@ -132,7 +132,8 @@ RECOMP_EXPORT s32 AudioApi_CreateStreamedSequence(AudioApiFileInfo* info, AudioA
 
     if ((seqIO == AUDIOAPI_SEQ_IO_BREMEN ||
          seqIO == AUDIOAPI_SEQ_IO_CREDITS_1 ||
-         seqIO == AUDIOAPI_SEQ_IO_CREDITS_2) && channelCount < 16) {
+         seqIO == AUDIOAPI_SEQ_IO_CREDITS_2 ||
+         seqIO == AUDIOAPI_SEQ_IO_FROG) && channelCount < 16) {
         initChanMask |= (1 << 15);
         freeChanMask |= (1 << 15);
     }
@@ -185,11 +186,13 @@ RECOMP_EXPORT s32 AudioApi_CreateStreamedSequence(AudioApiFileInfo* info, AudioA
      *   BREMEN:    Tight loop writing 0x00 to IO_PORT_0 every tatum (march actor sync).
      *   CREDITS_1: 8 timed cue pulses for credits part 1 scene transitions.
      *   CREDITS_2: 12 timed cue pulses for credits part 2 scene transitions.
+     *   FROG:      5 beat pulses for frog conducting timing checks.
      * Credits delay values are pre-converted from the original variable-tempo sequences
      * to fixed 25 BPM (20 tatums/sec). See vanillaSequenceBehavior.md for derivation. */
     if ((seqIO == AUDIOAPI_SEQ_IO_BREMEN ||
          seqIO == AUDIOAPI_SEQ_IO_CREDITS_1 ||
-         seqIO == AUDIOAPI_SEQ_IO_CREDITS_2) && channelCount < 16) {
+         seqIO == AUDIOAPI_SEQ_IO_CREDITS_2 ||
+         seqIO == AUDIOAPI_SEQ_IO_FROG) && channelCount < 16) {
         chan = cseq_channel_create(root);
         cseq_ldchan(seq, 15, chan);
         cseq_vol(chan, 0);
@@ -224,6 +227,20 @@ RECOMP_EXPORT s32 AudioApi_CreateStreamedSequence(AudioApiFileInfo* info, AudioA
                 cseq_stio(chan, 0);
             }
             cseq_section_end(chan);
+
+        } else if (seqIO == AUDIOAPI_SEQ_IO_FROG) {
+            /* seq_90: initialize IO_PORT_0 = 0, then 5 beat pulses every 177 ticks with 15-tick spacing. */
+            cseq_setval(chan, 0x00);
+            cseq_stio(chan, 0);
+
+            for (i = 0; i < 5; i++) {
+                cseq_delay(chan, 177);
+                cseq_setval(chan, i + 1);
+                cseq_stio(chan, 0);
+                cseq_delay(chan, 15);
+            }
+
+            cseq_section_end(chan);
         }
     }
 
@@ -239,18 +256,6 @@ RECOMP_EXPORT s32 AudioApi_CreateStreamedSequence(AudioApiFileInfo* info, AudioA
 
     /* Step 4: Compile CSeq to binary, copy to persistent allocation, register as sequence. */
     cseq_compile(root, 0);
-
-    /* DEBUG: dump compiled sequence */
-    {
-        size_t i;
-        recomp_printf("[Bremen] seqIO=%d channelCount=%d initChanMask=0x%04X seqSize=%d\n",
-            seqIO, channelCount, initChanMask, (int)root->buffer->size);
-        recomp_printf("[Bremen] seq hex: ");
-        for (i = 0; i < root->buffer->size && i < 128; i++) {
-            recomp_printf("%02X ", root->buffer->data[i]);
-        }
-        recomp_printf("\n");
-    }
 
     seqSize = root->buffer->size;
     seqData = recomp_alloc(seqSize);

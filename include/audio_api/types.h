@@ -56,6 +56,7 @@ typedef enum : u32 {
     AUDIOAPI_SEQ_IO_CREDITS_1,     // Channel 15, IO port 0: 8 cue pulses for credits part 1 scene transitions
     AUDIOAPI_SEQ_IO_CREDITS_2,     // Channel 15, IO port 0: 12 cue pulses for credits part 2 scene transitions
     AUDIOAPI_SEQ_IO_WINDFISH,      // Ballad special-case: keep vanilla seq_84 for partial band, redirect full mix
+    AUDIOAPI_SEQ_IO_FROG,          // Frog Song beat pulses on IO_PORT_0 for minigame timing
 } AudioApiSequenceIO;
 
 typedef struct AudioApiFileInfo {
