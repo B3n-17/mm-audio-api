@@ -95,6 +95,7 @@ RECOMP_IMPORT("magemods_audio_api", bool cseq_mutescale(CSeqSection* sequence, u
 RECOMP_IMPORT("magemods_audio_api", bool cseq_initchan(CSeqSection* sequence, u16 bitmask));
 RECOMP_IMPORT("magemods_audio_api", bool cseq_freechan(CSeqSection* sequence, u16 bitmask));
 RECOMP_IMPORT("magemods_audio_api", bool cseq_tempo(CSeqSection* sequence, u8 bpm));
+RECOMP_IMPORT("magemods_audio_api", bool cseq_runseq(CSeqSection* sequence, u8 playerIndex, u8 seqId));
 
 // Channel commands
 RECOMP_IMPORT("magemods_audio_api", bool cseq_notepri(CSeqSection* section, u8 priority));

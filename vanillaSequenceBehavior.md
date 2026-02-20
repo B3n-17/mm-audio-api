@@ -161,6 +161,7 @@ SEQ_0062: ldi 3; stio IO_PORT_3; /* outro, delay 1536, → loops to verse */
 **Note**: Can be ignored for now. Prevents playing from start after leaving the musicians rooms. TODO: Low Prio, add intro skip via marker.
 
 ### seq_77 — `NA_BGM_NEW_WAVE_BOSSA_NOVA`
+NOT AN ISSUE - REPLCAE SEQUENCES
 
 Indigo-Go's performance with configurable instrumentation.
 
@@ -183,7 +184,7 @@ stopchan 13
 stopchan 14
 ```
 
-**Impact**: TODO: Need 3 pre-rendered stems (full, sax-only, vocals-only) + a full mix.
+**Impact**: TODO: Need 2 pre-rendered stems (sax-only, vocals-only).
 
 ### seq_83 — `NA_BGM_BREMEN_MARCH`
 IMPLEMENTED
@@ -343,7 +344,8 @@ seq_83 (Bremen March), seq_90 (Frog Song), seq_116 (Credits pt1), seq_127 (Credi
 Current Audio API mapping for streamed replacements:
 - `AUDIOAPI_SEQ_IO_BREMEN` reproduces Bremen sync writes on channel 15 / IO_PORT_0.
 - `AUDIOAPI_SEQ_IO_FROG` reproduces Frog Song beat pulses on channel 15 / IO_PORT_0.
-- `AUDIOAPI_SEQ_IO_CREDITS_1` and `AUDIOAPI_SEQ_IO_CREDITS_2` reproduce end-credits cue writes.
+- `AUDIOAPI_SEQ_IO_CREDITS_1` emits the full vanilla credits cue schedule (seq_116 + seq_127 pulses).
+- `AUDIOAPI_SEQ_IO_CREDITS_2` emits only seq_127 (part 2) pulses.
 
 Note: `NA_BGM_FROG_SONG` (`seq_90`) replacement is intentionally ignored by core sequence-table
 replacement APIs. This keeps vanilla minigame flow and avoids soft-lock risk for frog conducting.

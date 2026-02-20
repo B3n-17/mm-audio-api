@@ -36,6 +36,9 @@
 #include <audio_api/soundfont.h>
 #include <audio_api/cseq.h>
 
+#define CREDITS_PART1_TOTAL_TATUMS 2537
+#define CREDITS_PART2_TOTAL_TATUMS 5053
+
 /* Imported from resource.c porcelain layer (same mod) */
 RECOMP_IMPORT(".", s32 AudioApi_AddAudioFileFromFs(AudioApiFileInfo* info, char* dir, char* filename));
 RECOMP_IMPORT(".", uintptr_t AudioApi_GetResourceDevAddr(u32 resourceId, u32 arg1, u32 arg2));
@@ -121,6 +124,12 @@ RECOMP_EXPORT s32 AudioApi_CreateStreamedSequence(AudioApiFileInfo* info, AudioA
         length = lceilf((info->loopCount + 1) * ((f32)info->sampleCount / info->sampleRate) *
                         (TATUMS_PER_BEAT * 25.0f / 60.0f));
         length = CLAMP(length, 0, 0x7FFF);
+
+        if (seqIO == AUDIOAPI_SEQ_IO_CREDITS_1) {
+            length = MAX(length, CREDITS_PART1_TOTAL_TATUMS + 1);
+        } else if (seqIO == AUDIOAPI_SEQ_IO_CREDITS_2) {
+            length = MAX(length, CREDITS_PART2_TOTAL_TATUMS + 1);
+        }
     }
 
     /* Step 3: Build CSeq binary — sequence header, channel commands, layer note data. */
@@ -207,7 +216,9 @@ RECOMP_EXPORT s32 AudioApi_CreateStreamedSequence(AudioApiFileInfo* info, AudioA
             cseq_jump(chan, ioLabel);
 
         } else if (seqIO == AUDIOAPI_SEQ_IO_CREDITS_1) {
-            /* seq_116: 8 cue writes to IO_PORT_0 = 0 at converted timings */
+            /* seq_116 replacement mode: emit part 1 cues only.
+             * After part 1, the sequence-level runseq hands off to seq_127 (credits part 2),
+             * matching vanilla seq_116 behavior. */
             static const u16 credits1Delays[] = { 414, 566, 300, 300, 300, 300, 349, 8 };
 
             for (i = 0; i < ARRAY_COUNT(credits1Delays); i++) {
@@ -215,6 +226,7 @@ RECOMP_EXPORT s32 AudioApi_CreateStreamedSequence(AudioApiFileInfo* info, AudioA
                 cseq_setval(chan, 0x00);
                 cseq_stio(chan, 0);
             }
+
             cseq_section_end(chan);
 
         } else if (seqIO == AUDIOAPI_SEQ_IO_CREDITS_2) {
@@ -247,6 +259,12 @@ RECOMP_EXPORT s32 AudioApi_CreateStreamedSequence(AudioApiFileInfo* info, AudioA
     cseq_tempo(seq, 25);         /* 25 BPM → 20 tatums/sec → 1 tatum per game frame at 20 FPS */
     cseq_delay(seq, length - 1); /* wait for playback to finish */
 
+    if (seqIO == AUDIOAPI_SEQ_IO_CREDITS_1) {
+        /* After part 1 finishes, hand off to seq_127 (credits part 2) on the same player.
+         * 0xFF = self (same player index), matching vanilla seq_116's runseq behavior. */
+        cseq_runseq(seq, 0xFF, NA_BGM_END_CREDITS_SECOND_HALF);
+    }
+
     if (info->loopCount == -1) {
         cseq_jump(seq, label);   /* infinite loop: jump back to start */
     }
@@ -277,9 +295,13 @@ RECOMP_EXPORT s32 AudioApi_CreateStreamedSequence(AudioApiFileInfo* info, AudioA
     return seqId;
 }
 
-/* High-level: load audio file → create infinite-loop sequence for background music.
- * Caller may set info->loopCount before calling; if left at 0 (default), loops infinitely. */
-RECOMP_EXPORT s32 AudioApi_CreateStreamedBgm(AudioApiFileInfo* info, char* dir, char* filename) {
+/* High-level: load audio file → create streamed sequence for background music.
+ * Policy:
+ *   - loop markers present: always loop infinitely
+ *   - no loop markers: play once
+ * This avoids requiring mod authors to set finite loop counts correctly in files. */
+RECOMP_EXPORT s32 AudioApi_CreateStreamedBgm(AudioApiFileInfo* info, char* dir, char* filename,
+                                              AudioApiSequenceIO seqIO) {
     AudioApiFileInfo defaultInfo = {0};
 
     if (info == NULL) {
@@ -296,11 +318,13 @@ RECOMP_EXPORT s32 AudioApi_CreateStreamedBgm(AudioApiFileInfo* info, char* dir, 
             : AUDIOAPI_CHANNEL_TYPE_STEREO;
     }
 
-    if (info->loopCount == 0) {
-        info->loopCount = -1;
+    if (seqIO == AUDIOAPI_SEQ_IO_CREDITS_1 || seqIO == AUDIOAPI_SEQ_IO_CREDITS_2) {
+        info->loopCount = 0;
+    } else {
+        info->loopCount = (info->loopCount != 0) ? -1 : 0;
     }
 
-    return AudioApi_CreateStreamedSequence(info, AUDIOAPI_SEQ_IO_NONE);
+    return AudioApi_CreateStreamedSequence(info, seqIO);
 }
 
 /* High-level: load audio file → create one-shot sequence flagged as fanfare (ducks BGM).

@@ -1,5 +1,6 @@
 #include <global.h>
 #include <recomp/modding.h>
+#include <recomp/recomputils.h>
 #include <core/sequence_functions.h>
 
 #define MML_VERSION_MM  1

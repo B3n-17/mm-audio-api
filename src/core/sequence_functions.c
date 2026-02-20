@@ -78,6 +78,7 @@
 #define SEQ_RESUME_POINT_NONE 0xC0
 #define AMBIENCE_CHANNEL_PROPERTIES_ENTRIES_MAX 33
 #define SEQ_FONT_ENTRY_SIZE 5
+#define AUDIOAPI_DEBUG_SKIP_TO_CREDITS_FROM_BREMEN 1
 
 #define NB_BGM_MORNING 128
 
@@ -175,6 +176,8 @@ s32 sWindfishReplacementSeqId = NA_BGM_DISABLED;
 AudioTableEntry sWindfishReplacementEntry;
 u8 sWindfishReplacementFontEntry[SEQ_FONT_ENTRY_SIZE];
 bool sWindfishReplacementReady = false;
+static bool sDebugCreditsWarpArmed = false;
+static bool sDebugCreditsWarpDone = false;
 
 // When enabled, shops use the vanilla radio effect (band-pass filter + gain compensation)
 // for spatial BGM. Cached and refreshed on soundtrack change for performance.
@@ -1270,6 +1273,8 @@ RECOMP_HOOK("Audio_ResetData") void AudioApi_ResetData(void) {
     sExtSpatialSeqSeqId = NA_BGM_GENERAL_SFX;
     sExtPrevAmbienceSeqArgs = 0x0000;
     sExtPrevMainBgmSeqArgs = 0x0000;
+    sDebugCreditsWarpArmed = false;
+    sDebugCreditsWarpDone = false;
 }
 
 RECOMP_HOOK("Audio_ResetForAudioHeapStep3") void AudioApi_ResetForAudioHeapStep3(void) {
@@ -1350,4 +1355,30 @@ RECOMP_HOOK_RETURN("AudioSeq_UpdateActiveSequences") void AudioApi_UpdateActiveS
             gExtActiveSeqs[seqPlayerIndex].setupCmdNum = 0;
         }
     }
+
+#if AUDIOAPI_DEBUG_SKIP_TO_CREDITS_FROM_BREMEN
+    if (!sDebugCreditsWarpDone && AudioApi_GetActiveSeqId(SEQ_PLAYER_FANFARE) == NA_BGM_BREMEN_MARCH) {
+        sDebugCreditsWarpArmed = true;
+    }
+#endif
 }
+
+#if AUDIOAPI_DEBUG_SKIP_TO_CREDITS_FROM_BREMEN
+RECOMP_HOOK("Graph_ExecuteAndDraw") void AudioApi_DebugWarpToCredits(GraphicsContext* gfxCtx, GameState* gameState) {
+    PlayState* play;
+
+    if (sDebugCreditsWarpDone || !sDebugCreditsWarpArmed || gameState == NULL) {
+        return;
+    }
+
+    play = (PlayState*)gameState;
+    play->nextEntrance = ENTRANCE(TERMINA_FIELD, 0);
+    gSaveContext.nextCutsceneIndex = 0xFFF7;
+    play->transitionTrigger = TRANS_TRIGGER_START;
+    play->transitionType = TRANS_TYPE_FADE_WHITE;
+
+    sDebugCreditsWarpDone = true;
+    sDebugCreditsWarpArmed = false;
+    recomp_printf("AudioApi: Debug warp to credits cutscene 0xFFF7\n");
+}
+#endif

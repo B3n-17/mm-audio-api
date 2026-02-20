@@ -96,6 +96,7 @@ bool cseq_mutescale(CSeqSection* sequence, u8 arg);
 bool cseq_initchan(CSeqSection* sequence, u16 bitmask);
 bool cseq_freechan(CSeqSection* sequence, u16 bitmask);
 bool cseq_tempo(CSeqSection* sequence, u8 bpm);
+bool cseq_runseq(CSeqSection* sequence, u8 playerIndex, u8 seqId);
 
 // Channel commands
 bool cseq_notepri(CSeqSection* section, u8 priority);

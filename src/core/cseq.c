@@ -444,6 +444,14 @@ RECOMP_EXPORT bool cseq_tempo(CSeqSection* sequence, u8 bpm) {
         && cseq_buffer_write_u8(sequence->buffer, bpm);
 }
 
+RECOMP_EXPORT bool cseq_runseq(CSeqSection* sequence, u8 playerIndex, u8 seqId) {
+    if (!sequence || sequence->ended) return false;
+    if (sequence->type != CSEQ_SECTION_SEQUENCE) return false;
+    return cseq_buffer_write_u8(sequence->buffer, ASEQ_OP_SEQ_RUNSEQ)
+        && cseq_buffer_write_u8(sequence->buffer, playerIndex)
+        && cseq_buffer_write_u8(sequence->buffer, seqId);
+}
+
 // Channel-only commands (enforce CSEQ_SECTION_CHANNEL type)
 
 RECOMP_EXPORT bool cseq_notepri(CSeqSection* section, u8 priority) {
