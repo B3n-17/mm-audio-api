@@ -332,38 +332,3 @@ Channel 15 (silent, invalid instrument) writes IO_PORT_0 = 0 at precise timing o
 | **IO_PORT_5** | SFX index high bits (seq_0), ambience channel enable (seq_1) |
 | **IO_PORT_6** | Zora Hall scratch register (seq_54) |
 | **IO_PORT_7** | Ocarina instrument type (14 sequences), File Select resume (seq_24), Zora Hall section entry (seq_54) |
-
-## Complexity Tiers for Streamed Audio Replacement
-
-**Tier 1 — Trivial** (startup flag only, no ongoing IO):
-seq_2, seq_24, seq_29, all ocarina songs (50-95), seq_103, seq_104
-
-**Tier 2 — Medium** (write-only IO during playback):
-seq_83 (Bremen March), seq_90 (Frog Song), seq_116 (Credits pt1), seq_127 (Credits pt2)
-
-Current Audio API mapping for streamed replacements:
-- `AUDIOAPI_SEQ_IO_BREMEN` reproduces Bremen sync writes on channel 15 / IO_PORT_0.
-- `AUDIOAPI_SEQ_IO_FROG` reproduces Frog Song beat pulses on channel 15 / IO_PORT_0.
-- `AUDIOAPI_SEQ_IO_CREDITS_1` emits the full vanilla credits cue schedule (seq_116 + seq_127 pulses).
-- `AUDIOAPI_SEQ_IO_CREDITS_2` emits only seq_127 (part 2) pulses.
-
-Note: `NA_BGM_FROG_SONG` (`seq_90`) replacement is intentionally ignored by core sequence-table
-replacement APIs. This keeps vanilla minigame flow and avoids soft-lock risk for frog conducting.
-
-**Tier 3 — Complex** (bidirectional IO or multi-stem):
-seq_54 (Zora Hall), seq_77 (New Wave Bossa Nova), seq_84 (Ballad of Wind Fish)
-
-### Current Audio API handling for seq_84 (Ballad of Wind Fish)
-
-When using `AudioApi_CreateStreamedFanfare(..., AUDIOAPI_SEQ_IO_WINDFISH)`, the Audio API stores the
-streamed sequence as a Wind Fish replacement target and patches playback at
-`Audio_PlayFanfareWithPlayerIOCustomPort(seqId, ioPort=4, ioData)`:
-
-- `ioData != 0` (partial band): restore vanilla seq_84 entry + fonts before playback.
-- `ioData == 0` (full band): restore streamed replacement entry + fonts into seq_84 before playback.
-
-This keeps vanilla cutscene timing/script semantics tied to seq_84 while still allowing full-mix
-remastered playback.
-
-**Tier 4 — Not replaceable**:
-seq_0 (SFX engine), seq_1 (Ambience), seq_122 (launcher)

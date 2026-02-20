@@ -8,7 +8,7 @@
 id = "magemods_audio_api"
 
 # Version of this mod.
-version = "0.5.1"
+version = "0.7.0"
 
 # The name that will show up for this mod in the mod menu. This should be human readable.
 display_name = "Audio API"
@@ -16,17 +16,18 @@ display_name = "Audio API"
 # The description that will show up when this mod is displayed in the mod menu. This should be human readable.
 description =  """
 This is an API for modders that enables easily replacing in-game audio.
+Note: This is an updated version of Magemods Audio API (https://github.com/magemods/mm-audio-api).
 """
 
 # A short description that will show up in this mod's entry in the mod list. This should be human readable and kept short
 # to prevent it from being cut off due to the limited space.
-short_description = "Audio Helper Library"
+short_description = "[BETA] Audio Helper Library"
 
 # Website URL for Thunderstore
-website_url = "https://github.com/magemods/mm-audio-api"
+website_url = "https://github.com/B3n-17/mm-audio-api"
 
 # Authors of this mod.
-authors = [ "magemods" ]
+authors = [ "magemods", "B3n-17" ]
 
 # ID of the target recomp game.
 game_id = "mm"

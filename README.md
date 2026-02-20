@@ -99,7 +99,7 @@ Add `magemods_audio_api` as a dependency in your mod's `mod.toml`:
 
 ```toml
 dependencies = [
-    { id = "magemods_audio_api", version = "0.5.1" }
+    { id = "magemods_audio_api", version = "0.7.0" }
 ]
 ```
 
@@ -132,10 +132,10 @@ The simplest way to add custom music is to load streamed audio files:
 AudioApiFileInfo fileInfo = {0};
 
 // Create a looping BGM from an audio file
-s32 seqId = AudioApi_CreateStreamedBgm(&fileInfo, "mod_data/audio", "my_song.ogg");
+s32 seqId = AudioApi_CreateStreamedBgm(&fileInfo, "mod_data/audio", "my_song.ogg", AUDIOAPI_SEQ_IO_NONE);
 
 // Create a one-shot fanfare
-s32 fanfareId = AudioApi_CreateStreamedFanfare(&fileInfo, "mod_data/audio", "my_fanfare.flac");
+s32 fanfareId = AudioApi_CreateStreamedFanfare(&fileInfo, "mod_data/audio", "my_fanfare.flac", AUDIOAPI_SEQ_IO_NONE);
 ```
 
 Supported formats: WAV, FLAC, MP3, Ogg Vorbis, Opus.
@@ -340,6 +340,10 @@ The mod exposes the following settings in the recomp mod settings UI:
 | Setting | Options | Default | Description |
 |---------|---------|---------|-------------|
 | Radio Effect in Shops | Off / On | Off | Applies a band-pass filter and gain to spatial BGM in shops, simulating a radio playing in the room. Takes effect on the next scene change. |
+
+## Credits
+
+Originally created by [magemods](https://github.com/magemods/mm-audio-api). This fork contains bug fixes and additional features to support full soundtrack replacement.
 
 ## License
 
