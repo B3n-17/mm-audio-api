@@ -76,7 +76,7 @@ Place `magemods_audio_api.nrm` and the platform-appropriate native library in th
 
 ### Setup
 
-Include the API in your mod:
+Copy the headers in include/Audio_api/ to your mod project. Include the API in your mod:
 
 ```c
 #include <audio_api/all.h>
@@ -138,7 +138,7 @@ s32 seqId = AudioApi_CreateStreamedBgm(&fileInfo, "mod_data/audio", "my_song.ogg
 s32 fanfareId = AudioApi_CreateStreamedFanfare(&fileInfo, "mod_data/audio", "my_fanfare.flac", AUDIOAPI_SEQ_IO_NONE);
 ```
 
-Supported formats: WAV, FLAC, MP3, Ogg Vorbis, Opus.
+Supported formats: WAV, FLAC, MP3, Ogg Vorbis, Ogg Opus.
 
 You can configure codec, channel type, cache strategy, and loop points via `AudioApiFileInfo`:
 
@@ -166,19 +166,6 @@ AudioApi_AddSoundFontFromFs(&fontInfo, "mod_data/audio", "my_font.soundfont");
 
 AudioApiSampleBankInfo bankInfo = {0};
 AudioApi_AddSampleBankFromFs(&bankInfo, "mod_data/audio", "my_samples.bank");
-```
-
-### Embedding Binary Data
-
-Use `INCBIN` to embed binary files directly in your mod:
-
-```c
-#include <audio_api/incbin.h>
-
-INCBIN(mySequenceData, "assets/my_sequence.aseq");
-
-// mySequenceData is a u8[] array, mySequenceData_end marks the end
-size_t size = mySequenceData_end - mySequenceData;
 ```
 
 ### Sequence Management

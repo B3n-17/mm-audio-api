@@ -1,4 +1,5 @@
 import os, shutil, json, zipfile, re, tomllib, pprint
+from typing import Any
 from pathlib import Path
 
 def slugify(text: str) -> str:
@@ -13,12 +14,12 @@ def get_description() -> str:
         return description
     return mod_toml["manifest"]["short_description"]
 
-def get_website_url() -> str:
+def get_website_url() -> str | None:
     if "website_url" in mod_toml["manifest"]:
         return mod_toml["manifest"]["website_url"]
     return None
 
-def get_package_manifest() ->dict[str, str]:
+def get_package_manifest() -> dict[str, Any]:
     return {
         "name": slugify(mod_toml["manifest"]["display_name"]),
         "version_number": mod_toml["manifest"]["version"],
@@ -27,17 +28,17 @@ def get_package_manifest() ->dict[str, str]:
         "dependencies": []
     }
 
-def create_manifest(path: Path) -> dict:
+def create_manifest(path: Path) -> bool:
     manifest = get_package_manifest()
     path.write_text(json.dumps(manifest, indent=4))
     return True
 
-def update_manifest(path: Path) -> dict:
+def update_manifest(path: Path) -> bool:
     manifest = get_package_manifest();
     del manifest["name"]
     del manifest["dependencies"]
 
-    current_manifest: dict[str, str] = json.loads(path.read_text());
+    current_manifest: dict[str, Any] = json.loads(path.read_text());
     current_manifest.update(manifest)
     path.write_text(json.dumps(current_manifest, indent=4))
     return True
@@ -89,20 +90,23 @@ def create_package():
     root_dir = Path(__file__).parent.parent
     build_dir = root_dir.joinpath("build")
     package_dir = root_dir.joinpath("dist")
+    publish_dir = root_dir.joinpath("publish")
 
     global mod_toml
     mod_toml = tomllib.loads(root_dir.joinpath("mod.toml").read_text())
 
     log(f"Create package dir at {package_dir.relative_to(root_dir)}",
         os.makedirs(package_dir, exist_ok=True) or True)
+    log(f"Create publish dir at {publish_dir.relative_to(root_dir)}",
+        os.makedirs(publish_dir, exist_ok=True) or True)
 
     manifest_file = package_dir.joinpath("manifest.json")
     if manifest_file.is_file():
-        log(f"Create manifest at {manifest_file.relative_to(root_dir)}",
-            create_manifest(manifest_file))
-    else:
         log(f"Update manifest at {manifest_file.relative_to(root_dir)}",
             update_manifest(manifest_file))
+    else:
+        log(f"Create manifest at {manifest_file.relative_to(root_dir)}",
+            create_manifest(manifest_file))
 
     readme_file = package_dir.joinpath("README.md")
     if not readme_file.is_file():
@@ -132,7 +136,7 @@ def create_package():
             log(f"Copy extlib from {extlib_src.relative_to(root_dir)} to {extlib_dst.relative_to(root_dir)}",
                 copy_file(extlib_src, extlib_dst))
 
-    package_file = root_dir.joinpath(mod_toml["manifest"]["id"] + ".thunderstore.zip")
+    package_file = publish_dir.joinpath(mod_toml["manifest"]["id"] + ".thunderstore.zip")
     if did_error():
         log("Some files were missing, skipping creating mod package", False)
     else:

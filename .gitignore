@@ -15,7 +15,7 @@
 ./funcs.h
 patches.map
 build/
-.vscode/settings.json
-.vscode/launch.json
-.vscode/tasks.json
+.vscode/
 .claude/
+dist/
+publish/

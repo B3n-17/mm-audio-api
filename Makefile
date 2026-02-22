@@ -40,7 +40,15 @@ C_DEPS := $(patsubst %.c,$(BUILD_DIR)/%.d,$(C_SRCS))
 BUILD_DIRS := $(sort $(dir $(C_OBJS)))
 
 
-all: $(MOD_ELF) extlib-windows extlib-linux extlib-macos nrm dist
+all: prep $(MOD_ELF) extlib-windows extlib-linux extlib-macos nrm dist
+
+prep:
+ifeq ($(OS),Windows_NT)
+	- if exist dist rmdir /S /Q dist
+	- if exist publish rmdir /S /Q publish
+else
+	- rm -rf dist publish
+endif
 
 $(BUILD_DIRS):
 ifeq ($(OS),Windows_NT)
@@ -68,6 +76,7 @@ extlib-linux: extlib-x86_64-linux-gnu
 extlib-macos: extlib-aarch64-macos-none
 
 nrm: $(MOD_ELF)
+	$(PYTHON_EXEC) -c "from pathlib import Path; import shutil; dist = Path('dist'); dist.mkdir(parents=True, exist_ok=True); changelog_src = Path('CHANGELOG.md') if Path('CHANGELOG.md').exists() else Path('changelog.md'); shutil.copy2(changelog_src, dist / 'CHANGELOG.md'); shutil.copy2(Path('icon.png'), dist / 'icon.png')"
 	$(RECOMP_TOOL) $(MOD_TOML) $(BUILD_DIR)
 
 dist:
@@ -82,4 +91,4 @@ endif
 
 -include $(C_DEPS)
 
-.PHONY: all extlib-windows extlib-linux extlib-macos nrm dist clean
+.PHONY: all prep extlib-windows extlib-linux extlib-macos nrm dist clean

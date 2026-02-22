@@ -8,15 +8,16 @@
 id = "magemods_audio_api"
 
 # Version of this mod.
-version = "0.7.1"
+version = "0.7.2"
 
 # The name that will show up for this mod in the mod menu. This should be human readable.
 display_name = "Audio API"
 
 # The description that will show up when this mod is displayed in the mod menu. This should be human readable.
 description =  """
-This is an API for modders that enables easily replacing in-game audio.
-Note: This is an updated version of Magemods Audio API (https://github.com/magemods/mm-audio-api).
+This is an API for modders that enables easily replacing or adding in-game audio.
+It supports looped audio, PCM WAV, FLAC, OGG VORBIS, OGG OPUS, and can load these via file path and/or ZIP DMA (influding NRM; ZIP/NRM must be store only without compression!).
+Note: This is an fixed and improved version of Magemods Audio API (original: https://github.com/magemods/mm-audio-api).
 """
 
 # A short description that will show up in this mod's entry in the mod list. This should be human readable and kept short
