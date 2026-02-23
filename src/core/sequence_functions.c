@@ -584,7 +584,7 @@ RECOMP_EXPORT void AudioApi_PlaySubBgmAtPosWithFilter(Vec3f* pos, u8 seqId, f32 
     sSpatialSeqFilterPos.y = pos->y;
     sSpatialSeqFilterPos.z = pos->z;
     sExtSpatialSeqSeqId = seqId;
-    //! @bug Did not set sSpatialSeqMaxDist = maxDist; This will use the previously set value of sSpatialSeqMaxDist
+    sSpatialSeqMaxDist = maxDist;
     sSpatialSeqFlags |= 1; // Update with volume and filter
     sSpatialSubBgmFadeTimer = 4;
 }
@@ -595,9 +595,24 @@ RECOMP_PATCH void Audio_PlaySubBgmAtPosWithFilter(Vec3f* pos, u8 seqId, f32 maxD
 
 RECOMP_PATCH void Audio_UpdateSubBgmAtPos(void) {
     if (sSpatialSubBgmFadeTimer != 0) {
+        if (sSpatialSeqFlags == 0) {
+            // No guru-guru position update this tick: fade the sub-BGM out instead
+            // of re-applying stale positional volume (which can spike to full volume).
+            AudioSeq_SetVolumeScale(SEQ_PLAYER_BGM_SUB, VOL_SCALE_INDEX_BGM_SUB, 0, sSpatialSubBgmFadeTimer);
+            sSpatialSubBgmFadeTimer--;
+
+            if (sSpatialSubBgmFadeTimer == 0) {
+                Audio_StopSequenceAtPos(SEQ_PLAYER_BGM_SUB, 1);
+                sSpatialSeqIsActive[SEQ_PLAYER_BGM_SUB] = false;
+            }
+
+            return;
+        }
+
         if (sSpatialSeqFlags & 2) {
-            // Affects only volume
-            AudioApi_StartSubBgmAtPos(SEQ_PLAYER_BGM_SUB, &sSpatialSeqNoFilterPos, sExtSpatialSeqSeqId, 0x20,
+            // Keep stereo spatialization (pan + pan_weight_7F) while updating volume.
+            // Using 0x20 here can collapse playback to center when this sub BGM restarts.
+            AudioApi_StartSubBgmAtPos(SEQ_PLAYER_BGM_SUB, &sSpatialSeqNoFilterPos, sExtSpatialSeqSeqId, 0x26,
                                       100.0f, sSpatialSeqMaxDist, 1.0f);
         } else {
             // 0x26: pan + pan_weight_7F + volume (stereo spatial)
@@ -609,7 +624,11 @@ RECOMP_PATCH void Audio_UpdateSubBgmAtPos(void) {
 
         sSpatialSubBgmFadeTimer--;
         if (sSpatialSubBgmFadeTimer == 0) {
-            Audio_StopSequenceAtPos(SEQ_PLAYER_BGM_SUB, 10);
+            // Prevent a brief overlap/volume pop with the next area BGM by
+            // forcing the positional sub-BGM to fade out almost immediately.
+            AudioSeq_SetVolumeScale(SEQ_PLAYER_BGM_SUB, VOL_SCALE_INDEX_BGM_SUB, 0, 1);
+            Audio_StopSequenceAtPos(SEQ_PLAYER_BGM_SUB, 1);
+            sSpatialSeqIsActive[SEQ_PLAYER_BGM_SUB] = false;
         }
 
         sSpatialSeqFlags = 0;
