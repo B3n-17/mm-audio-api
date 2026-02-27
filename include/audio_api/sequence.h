@@ -38,6 +38,31 @@ RECOMP_IMPORT("magemods_audio_api", void AudioApi_RestoreSequenceFlags(s32 seqId
 RECOMP_IMPORT("magemods_audio_api", s32 AudioApi_IsSequencePlaying(s32 seqId));
 
 /**
+ * Enemy/sub BGM blend signal.
+ *
+ * value = 0..127, where 0 means enemy blend inactive and higher values
+ * indicate stronger enemy/sub mix intent. The API does not apply channel
+ * masking/panning policy for this signal.
+ */
+RECOMP_DECLARE_EVENT(AudioApi_EnemyBgmSplit(s8 volumeSplit));
+
+/**
+ * Non-enemy sub-BGM blend signal.
+ *
+ * value = 0..127, where 0 means no sub-BGM blend and higher values
+ * indicate stronger sub-BGM mix intent.
+ */
+RECOMP_DECLARE_EVENT(AudioApi_SubBgmBlend(s8 volumeSplit));
+
+/**
+ * Unified BGM blend intent signal with explicit source.
+ *
+ * source identifies the blend origin (enemy, spatial sub-BGM, non-spatial sub-BGM).
+ * value = 0..127, where 0 means inactive for that source.
+ */
+RECOMP_DECLARE_EVENT(AudioApi_BgmBlendIntent(AudioApiBgmBlendSource source, s8 volumeSplit));
+
+/**
  * Custom sequence IDs beyond the vanilla range.
  * Replace these with AudioApi_ReplaceSequence() to activate them.
  */

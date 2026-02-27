@@ -141,7 +141,6 @@ extern s8 sAudioCutsceneFlag;
 
 extern void Audio_MuteBgmPlayersForFanfare(void);
 extern void Audio_StopSequenceAtPos(u8 seqPlayerIndex, u8 volumeFadeTimer);
-extern void Audio_SplitBgmChannels(s8 volumeSplit);
 
 extern void Audio_SetObjSoundProperties(u8 seqPlayerIndex, Vec3f* pos, s16 flags,
                                         f32 minDist, f32 maxDist, f32 maxVolume, f32 minVolume);
@@ -205,6 +204,41 @@ static bool AudioApi_IsSequenceRegistered(s32 seqId) {
 }
 
 RECOMP_DECLARE_EVENT(AudioApi_SequenceStarted(s8 seqPlayerIndex, s32 seqId, u16 seqArgs, u16 fadeInDuration));
+
+// Fired whenever enemy/sub BGM blend intent changes.
+//   0    = enemy BGM inactive
+//   >0   = enemy BGM active, blend amount proportional to enemy proximity
+// The API emits this as a signal only. Channel masking/panning policy belongs downstream.
+RECOMP_DECLARE_EVENT(AudioApi_EnemyBgmSplit(s8 volumeSplit));
+
+// Fired for non-enemy sub-BGM blend intent changes.
+//   0    = no sub-BGM blend on main BGM
+//   >0   = stronger sub-BGM blend intent (main BGM should be reduced accordingly)
+// This is signal-only; downstream mods decide how to route channels/pan/gain.
+RECOMP_DECLARE_EVENT(AudioApi_SubBgmBlend(s8 volumeSplit));
+
+#ifndef AUDIOAPI_BGM_BLEND_SOURCE_ENEMY
+typedef enum {
+    AUDIOAPI_BGM_BLEND_SOURCE_ENEMY = 0,
+    AUDIOAPI_BGM_BLEND_SOURCE_SUB_SPATIAL = 1,
+    AUDIOAPI_BGM_BLEND_SOURCE_SUB_NONSPATIAL = 2,
+} AudioApiBgmBlendSource;
+#endif
+
+RECOMP_DECLARE_EVENT(AudioApi_BgmBlendIntent(AudioApiBgmBlendSource source, s8 volumeSplit));
+
+static s8 sLastBgmBlendIntent[3] = { -1, -1, -1 };
+
+static void AudioApi_EmitBgmBlendIntent(AudioApiBgmBlendSource source, s8 volumeSplit) {
+    s8 clamped = CLAMP(volumeSplit, 0, 127);
+
+    if (sLastBgmBlendIntent[source] == clamped) {
+        return;
+    }
+
+    sLastBgmBlendIntent[source] = clamped;
+    AudioApi_BgmBlendIntent(source, clamped);
+}
 
 // ======== MAIN START, STOP, GETTER, SETTER FUNCTIONS ========
 
@@ -302,14 +336,14 @@ RECOMP_PATCH u16 AudioSeq_GetActiveSeqId(u8 seqPlayerIndex) {
 
 // Internal functions, the exports are located in sequence.c
 u8 AudioApi_GetSequenceFlagsInternal(s32 seqId) {
-    if (seqId >= gAudioCtx.sequenceTable->header.numEntries) {
+    if (seqId < 0 || seqId >= gAudioCtx.sequenceTable->header.numEntries) {
         return 0;
     }
     return sExtSeqFlags[seqId];
 }
 
 void AudioApi_SetSequenceFlagsInternal(s32 seqId, u8 flags) {
-    if (seqId >= gAudioCtx.sequenceTable->header.numEntries) {
+    if (seqId < 0 || seqId >= gAudioCtx.sequenceTable->header.numEntries) {
         return;
     }
     sExtSeqFlags[seqId] = flags;
@@ -510,6 +544,8 @@ RECOMP_EXPORT void AudioApi_PlaySubBgm(s32 seqId, u16 seqArgs) {
     AudioSeq_SetVolumeScale(SEQ_PLAYER_BGM_SUB, VOL_SCALE_INDEX_BGM_SUB, 0x7F, 0);
     SEQCMD_EXTENDED_PLAY_SEQUENCE(SEQ_PLAYER_BGM_SUB, 0, seqArgs, seqId);
     AudioSeq_SetVolumeScale(SEQ_PLAYER_BGM_MAIN, VOL_SCALE_INDEX_BGM_SUB, 0, 5);
+    AudioApi_SubBgmBlend(0x7F);
+    AudioApi_EmitBgmBlendIntent(AUDIOAPI_BGM_BLEND_SOURCE_SUB_NONSPATIAL, 0x7F);
 
     SEQCMD_SETUP_RESTORE_SEQPLAYER_VOLUME_WITH_SCALE_INDEX(SEQ_PLAYER_BGM_SUB, SEQ_PLAYER_BGM_MAIN, 3, 10);
     SEQCMD_SETUP_SET_CHANNEL_DISABLE_MASK(SEQ_PLAYER_BGM_SUB, SEQ_PLAYER_BGM_MAIN, 0);
@@ -529,6 +565,10 @@ RECOMP_EXPORT void AudioApi_StartSubBgmAtPos(u8 seqPlayerIndex, Vec3f* projected
         if (seqId0 == seqId) {
             Audio_StopSequenceAtPos(seqPlayerIndex, 10);
             sSpatialSeqIsActive[seqPlayerIndex] = false;
+            if (seqPlayerIndex == SEQ_PLAYER_BGM_SUB) {
+                AudioApi_SubBgmBlend(0);
+                AudioApi_EmitBgmBlendIntent(AUDIOAPI_BGM_BLEND_SOURCE_SUB_SPATIAL, 0);
+            }
         }
         return;
     }
@@ -550,7 +590,11 @@ RECOMP_EXPORT void AudioApi_StartSubBgmAtPos(u8 seqPlayerIndex, Vec3f* projected
         f32 relVolume = CLAMP(1.0f - ((maxDist - dist) / (maxDist - minDist)), 0.0f, 1.0f);
         u8 targetVolume = relVolume * 127.0f;
         AudioSeq_SetVolumeScale(SEQ_PLAYER_BGM_MAIN, VOL_SCALE_INDEX_BGM_SUB, targetVolume, 10);
-        Audio_SplitBgmChannels(0x7F - targetVolume);
+        AudioApi_SubBgmBlend(0x7F - targetVolume);
+        AudioApi_EmitBgmBlendIntent(AUDIOAPI_BGM_BLEND_SOURCE_SUB_SPATIAL, 0x7F - targetVolume);
+    } else if (seqPlayerIndex == SEQ_PLAYER_BGM_SUB) {
+        AudioApi_SubBgmBlend(0);
+        AudioApi_EmitBgmBlendIntent(AUDIOAPI_BGM_BLEND_SOURCE_SUB_SPATIAL, 0);
     }
 }
 
@@ -604,6 +648,8 @@ RECOMP_PATCH void Audio_UpdateSubBgmAtPos(void) {
             if (sSpatialSubBgmFadeTimer == 0) {
                 Audio_StopSequenceAtPos(SEQ_PLAYER_BGM_SUB, 1);
                 sSpatialSeqIsActive[SEQ_PLAYER_BGM_SUB] = false;
+                AudioApi_SubBgmBlend(0);
+                AudioApi_EmitBgmBlendIntent(AUDIOAPI_BGM_BLEND_SOURCE_SUB_SPATIAL, 0);
             }
 
             return;
@@ -629,6 +675,8 @@ RECOMP_PATCH void Audio_UpdateSubBgmAtPos(void) {
             AudioSeq_SetVolumeScale(SEQ_PLAYER_BGM_SUB, VOL_SCALE_INDEX_BGM_SUB, 0, 1);
             Audio_StopSequenceAtPos(SEQ_PLAYER_BGM_SUB, 1);
             sSpatialSeqIsActive[SEQ_PLAYER_BGM_SUB] = false;
+            AudioApi_SubBgmBlend(0);
+            AudioApi_EmitBgmBlendIntent(AUDIOAPI_BGM_BLEND_SOURCE_SUB_SPATIAL, 0);
         }
 
         sSpatialSeqFlags = 0;
@@ -697,6 +745,10 @@ RECOMP_PATCH void Audio_UpdateSequenceAtPos(void) {
             if (sSpatialSeqFadeTimer == 0) {
                 Audio_StopSequenceAtPos(sSpatialSeqPlayerIndex, volumeFadeTimer);
                 sSpatialSeqIsActive[sSpatialSeqPlayerIndex] = false;
+                if (sSpatialSeqPlayerIndex == SEQ_PLAYER_BGM_SUB) {
+                    AudioApi_SubBgmBlend(0);
+                    AudioApi_EmitBgmBlendIntent(AUDIOAPI_BGM_BLEND_SOURCE_SUB_SPATIAL, 0);
+                }
             }
         } else {
             if ((sSpatialSeqPlayerIndex == SEQ_PLAYER_BGM_MAIN) && (mainBgmSeqId == NA_BGM_FINAL_HOURS)) {
@@ -1127,9 +1179,8 @@ RECOMP_PATCH void Audio_SetSequenceMode(u8 seqMode) {
                     if (seqId >= NA_BGM_TERMINA_FIELD) {
                         AudioSeq_SetVolumeScale(SEQ_PLAYER_BGM_MAIN, VOL_SCALE_INDEX_BGM_SUB,
                                                 0x7F - sBgmEnemyVolume, 10);
-                        if (gAudioCtx.seqPlayers[SEQ_PLAYER_BGM_SUB].enabled) {
-                            Audio_SplitBgmChannels(sBgmEnemyVolume);
-                        }
+                        AudioApi_EnemyBgmSplit(sBgmEnemyVolume);
+                        AudioApi_EmitBgmBlendIntent(AUDIOAPI_BGM_BLEND_SOURCE_ENEMY, sBgmEnemyVolume);
                     }
                 } else if ((sPrevSeqMode & 0x7F) == SEQ_MODE_ENEMY) {
                     // If only sPrevSeqMode = SEQ_MODE_ENEMY (End)
@@ -1143,7 +1194,8 @@ RECOMP_PATCH void Audio_SetSequenceMode(u8 seqMode) {
 
                     AudioSeq_SetVolumeScale(SEQ_PLAYER_BGM_MAIN, VOL_SCALE_INDEX_BGM_SUB,
                                             0x7F, volumeFadeOutTimer);
-                    Audio_SplitBgmChannels(0);
+                    AudioApi_EnemyBgmSplit(0);
+                    AudioApi_EmitBgmBlendIntent(AUDIOAPI_BGM_BLEND_SOURCE_ENEMY, 0);
                 }
 
                 sPrevSeqMode = seqMode + 0x80;
@@ -1180,7 +1232,12 @@ RECOMP_PATCH void Audio_SetSequenceMode(u8 seqMode) {
 RECOMP_PATCH void Audio_UpdateEnemyBgmVolume(f32 dist) {
     s32 seqId = AudioApi_GetActiveSeqId(SEQ_PLAYER_BGM_MAIN);
     u8 seqFlags = AudioApi_GetSequenceFlagsInternal(seqId);
-    bool subEnabled = gAudioCtx.seqPlayers[SEQ_PLAYER_BGM_SUB].enabled;
+    // Check specifically that the sub player is playing enemy BGM, not just any sequence.
+    // Using the raw enabled flag is unreliable — the sub player stays enabled for several
+    // frames while fading out after an enemy dies, causing the channel split to remain
+    // active on the main BGM and collapsing it to a subset of channels.
+    bool subIsEnemy = gAudioCtx.seqPlayers[SEQ_PLAYER_BGM_SUB].enabled &&
+                      (AudioApi_GetActiveSeqId(SEQ_PLAYER_BGM_SUB) == NA_BGM_ENEMY);
 
     if (sPrevSeqMode == (SEQ_MODE_ENEMY | 0x80)) {
         if (dist != sBgmEnemyDist) {
@@ -1189,14 +1246,20 @@ RECOMP_PATCH void Audio_UpdateEnemyBgmVolume(f32 dist) {
 
             AudioSeq_SetVolumeScale(SEQ_PLAYER_BGM_SUB, VOL_SCALE_INDEX_BGM_SUB, sBgmEnemyVolume, 10);
 
-            if (subEnabled && (seqId >= NA_BGM_TERMINA_FIELD) && !(seqFlags & SEQ_FLAG_FANFARE_KAMARO)) {
+            if (subIsEnemy && (seqId >= NA_BGM_TERMINA_FIELD) && !(seqFlags & SEQ_FLAG_FANFARE_KAMARO)) {
                 AudioSeq_SetVolumeScale(SEQ_PLAYER_BGM_MAIN, VOL_SCALE_INDEX_BGM_SUB, (0x7F - sBgmEnemyVolume), 10);
             }
         }
 
-        if (subEnabled) {
-            Audio_SplitBgmChannels(sBgmEnemyVolume);
+        if (!subIsEnemy) {
+            // Sub player is no longer playing enemy BGM (async font load gap, fade-out, death, etc.).
+            // Reset volume and invalidate dist so the next frame fully recalculates from scratch,
+            // preventing a stale sBgmEnemyVolume from being applied to the channel split.
+            sBgmEnemyVolume = 0;
+            sBgmEnemyDist = -1.0f;
         }
+        AudioApi_EnemyBgmSplit(subIsEnemy ? sBgmEnemyVolume : 0);
+        AudioApi_EmitBgmBlendIntent(AUDIOAPI_BGM_BLEND_SOURCE_ENEMY, subIsEnemy ? sBgmEnemyVolume : 0);
     }
     sBgmEnemyDist = dist;
 }
@@ -1275,6 +1338,14 @@ RECOMP_PATCH void AudioSeq_ResetActiveSequences(void) {
         gActiveSeqs[seqPlayerIndex].volFadeTimer = 1;
         gActiveSeqs[seqPlayerIndex].fadeVolUpdate = true;
     }
+
+    sLastBgmBlendIntent[AUDIOAPI_BGM_BLEND_SOURCE_ENEMY] = -1;
+    sLastBgmBlendIntent[AUDIOAPI_BGM_BLEND_SOURCE_SUB_SPATIAL] = -1;
+    sLastBgmBlendIntent[AUDIOAPI_BGM_BLEND_SOURCE_SUB_NONSPATIAL] = -1;
+
+    AudioApi_EmitBgmBlendIntent(AUDIOAPI_BGM_BLEND_SOURCE_ENEMY, 0);
+    AudioApi_EmitBgmBlendIntent(AUDIOAPI_BGM_BLEND_SOURCE_SUB_SPATIAL, 0);
+    AudioApi_EmitBgmBlendIntent(AUDIOAPI_BGM_BLEND_SOURCE_SUB_NONSPATIAL, 0);
 }
 
 RECOMP_PATCH void Audio_ResetRequestedSceneSeqId(void) {
@@ -1312,6 +1383,11 @@ RECOMP_HOOK("AudioSeq_UpdateActiveSequences") void AudioApi_UpdateActiveSequence
         if ((AudioSeq_GetActiveSeqId(seqPlayerIndex) != NA_BGM_DISABLED) &&
             !gAudioCtx.seqPlayers[seqPlayerIndex].enabled && (!gActiveSeqs[seqPlayerIndex].isSeqPlayerInit)) {
             gExtActiveSeqs[seqPlayerIndex].seqId = NA_BGM_DISABLED;
+
+            if (seqPlayerIndex == SEQ_PLAYER_BGM_SUB) {
+                AudioApi_EmitBgmBlendIntent(AUDIOAPI_BGM_BLEND_SOURCE_SUB_NONSPATIAL, 0);
+                AudioApi_EmitBgmBlendIntent(AUDIOAPI_BGM_BLEND_SOURCE_SUB_SPATIAL, 0);
+            }
         }
 
         // Check if the requested sequences is waiting for fonts to load
@@ -1371,3 +1447,9 @@ RECOMP_HOOK_RETURN("AudioSeq_UpdateActiveSequences") void AudioApi_UpdateActiveS
     }
 
 }
+
+// ======== RECOMP-SPECIFIC OVERRIDES ========
+
+// Compatibility stub: vanilla channel arbitration is intentionally disabled on recomp.
+// Downstream mods own channel-routing policy for custom mixes.
+RECOMP_PATCH void Audio_SplitBgmChannels(s8 volumeSplit) {}

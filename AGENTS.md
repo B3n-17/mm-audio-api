@@ -142,11 +142,12 @@ bool AudioApi_AddSampleBankFromFs(AudioApiSampleBankInfo* info, char* dir, char*
 bool AudioApi_AddAudioFileFromFs(AudioApiFileInfo* info, char* dir, char* filename);
 
 // Create playable sequence from a decoded audio file
-s32  AudioApi_CreateStreamedBgm(AudioApiFileInfo* info, char* dir, char* filename);      // loops forever
-s32  AudioApi_CreateStreamedFanfare(AudioApiFileInfo* info, char* dir, char* filename);   // plays once
+s32  AudioApi_CreateStreamedSequence(AudioApiFileInfo* info, AudioApiSequenceIO seqIO);
+s32  AudioApi_CreateStreamedBgm(AudioApiFileInfo* info, char* dir, char* filename, AudioApiSequenceIO seqIO);      // loops forever
+s32  AudioApi_CreateStreamedFanfare(AudioApiFileInfo* info, char* dir, char* filename, AudioApiSequenceIO seqIO);   // plays once
 
 // Get DMA device address for a loaded resource
-uintptr_t AudioApi_GetResourceDevAddr(u32 resourceId);
+uintptr_t AudioApi_GetResourceDevAddr(u32 resourceId, u32 arg1, u32 arg2);
 ```
 
 ### Sequence Management
@@ -319,7 +320,7 @@ The audiofile system bridges arbitrary audio formats (WAV/FLAC/MP3/OGG/Opus) int
 
 1. **Load** — `AudioApi_AddAudioFileFromFs()` loads + decodes the file via the native C++ library
 2. **Soundfont** — Creates an empty soundfont; for each track, wraps the decoded PCM as a `Sample` (CODEC_S16) with tuning = `sampleRate / 32000.0f`, wraps in an `Instrument`, adds to soundfont
-3. **Sequence** — Generates a minimal CSeq binary: each channel plays one instrument, each layer plays a single C4 note for the full duration. Stereo files use 2 layers per channel (L pan=0, R pan=127)
+3. **Sequence** — Generates a minimal CSeq binary: one channel per decoded track, one layer per channel, each playing a single C4 note for the full duration. Stereo files map even tracks hard-left and odd tracks hard-right via channel pan.
 4. **Playback** — The generated sequence is indistinguishable from a real sequence. The DMA callback streams sample data on demand during synthesis
 
 ---
@@ -406,7 +407,7 @@ This shows how a mod uses the Audio API to replace in-game music with streamed a
 // Hook into Audio API initialization event
 RECOMP_CALLBACK("magemods_audio_api", AudioApi_Init) void onAudioApiInit() {
     // Load a FLAC file as looping BGM from a zip archive
-    s32 seqId = AudioApi_CreateStreamedBgm(NULL, "mymod.zip", "music.flac");
+    s32 seqId = AudioApi_CreateStreamedBgm(NULL, "mymod.zip", "music.flac", AUDIOAPI_SEQ_IO_NONE);
 
     // Replace vanilla sequence with the streamed one
     AudioApi_ReplaceSequence(NA_BGM_TERMINA_FIELD, &gAudioCtx.sequenceTable->entries[seqId]);
@@ -426,10 +427,10 @@ RECOMP_CALLBACK("magemods_audio_api", AudioApi_Init) void onAudioApiInit() {
 **2. Loading audio — BGM vs Fanfare:**
 ```c
 // BGM: loops forever, for background music
-s32 bgmId = AudioApi_CreateStreamedBgm(NULL, "mymod.zip", "field_theme.flac");
+s32 bgmId = AudioApi_CreateStreamedBgm(NULL, "mymod.zip", "field_theme.flac", AUDIOAPI_SEQ_IO_NONE);
 
 // Fanfare: plays once, for jingles/stingers (auto-sets SEQ_FLAG_FANFARE)
-s32 fanfareId = AudioApi_CreateStreamedFanfare(NULL, "mymod.zip", "item_get.flac");
+s32 fanfareId = AudioApi_CreateStreamedFanfare(NULL, "mymod.zip", "item_get.flac", AUDIOAPI_SEQ_IO_NONE);
 ```
 
 **3. Replacing vanilla sequences:**
@@ -442,10 +443,10 @@ AudioApi_ReplaceSequenceFont(NA_BGM_TERMINA_FIELD, 0, AudioApi_GetSequenceFont(s
 **4. File sources — supports filesystem paths and ZIP archives:**
 ```c
 // From a ZIP file bundled with the mod
-AudioApi_CreateStreamedBgm(NULL, "mymod.zip", "music/theme.flac");
+AudioApi_CreateStreamedBgm(NULL, "mymod.zip", "music/theme.flac", AUDIOAPI_SEQ_IO_NONE);
 
 // From a loose file on disk (dir = base directory)
-AudioApi_CreateStreamedBgm(NULL, "mymod_assets", "theme.flac");
+AudioApi_CreateStreamedBgm(NULL, "mymod_assets", "theme.flac", AUDIOAPI_SEQ_IO_NONE);
 ```
 
 **5. Supported formats:** WAV, FLAC, MP3, OGG Vorbis, Opus (auto-detected from file extension)
@@ -472,10 +473,10 @@ RECOMP_IMPORT("magemods_audio_api", s32 AudioApi_GetSeqPlayerSeqId(SequencePlaye
 
 ### Stereo Audio Layout
 
-When loading stereo files, the Audio API maps tracks to channels/layers:
+When loading stereo files, the Audio API maps tracks to channels one-to-one:
 - **Mono** (1 track): 1 channel, 1 layer, centered (pan=64)
-- **Stereo** (2 tracks): 1 channel, 2 layers — Layer 0 = Left (pan=0), Layer 1 = Right (pan=127)
-- **Multi-track**: even channels = one group, odd channels = another (useful for dual-audio crossfade mods)
+- **Stereo** (2 tracks): 2 channels, 1 layer each — channel 0 = Left (pan=0), channel 1 = Right (pan=127)
+- **Multi-track**: even channels = left group, odd channels = right group (useful for dual-audio crossfade mods)
 
 ### Dual-Audio Crossfade Pattern
 

@@ -11,7 +11,7 @@
  *      to a DMA-backed Sample at the file's native sample rate (tuned via sampleRate/32000).
  *   2. Computes sequence length in tatums (48 per beat @ 25 BPM = 20 tatums/sec = 1 per frame).
  *   3. Builds a CSeq (compiled sequence) with:
- *      - One channel per mono track, or one channel per stereo pair (L=layer0 pan0, R=layer1 pan127)
+ *      - One channel per decoded audio track (max 16 channels)
  *      - Each channel plays one note (C4) for the full duration at max velocity
  *      - Loop: infinite (loopCount=-1) → jump back to label; finite → play once and end
  *   4. Compiles CSeq to binary, registers it as a new sequence, binds the soundfont.
@@ -24,7 +24,8 @@
  *
  * Channel layout:
  *   MONO:   trackCount tracks → trackCount channels, 1 layer each (centered)
- *   STEREO: trackCount tracks → trackCount/2 channels, 2 layers each (L+R panned)
+ *   STEREO: trackCount tracks → trackCount channels, 1 layer each
+ *           (even tracks hard-left, odd tracks hard-right)
  */
 #include <global.h>
 #include <recomp/modding.h>
@@ -71,13 +72,13 @@ RECOMP_EXPORT s32 AudioApi_CreateStreamedSequence(AudioApiFileInfo* info, AudioA
         return -1;
     }
 
-    /* Mono: 1 track = 1 channel (max 16). Stereo: 2 tracks = 1 channel (max 32 tracks / 16 ch). */
+    /* One channel per decoded track (max 16 channels). */
     if (info->channelType == AUDIOAPI_CHANNEL_TYPE_MONO) {
         trackCount = MIN(info->trackCount, 16);
         channelCount = trackCount;
     } else if (info->channelType == AUDIOAPI_CHANNEL_TYPE_STEREO) {
-        trackCount = MIN(info->trackCount, 32);
-        channelCount = trackCount / 2;
+        trackCount = MIN(info->trackCount, 16);
+        channelCount = trackCount;
     } else {
         return -1;
     }
@@ -158,33 +159,22 @@ RECOMP_EXPORT s32 AudioApi_CreateStreamedSequence(AudioApiFileInfo* info, AudioA
         chan = cseq_channel_create(root);
         cseq_ldchan(seq, channelNo, chan);
         cseq_noshort(chan);
-        cseq_panweight(chan, 0);
+        cseq_panweight(chan, 0x7F);
         cseq_notepri(chan, 1);
         cseq_vol(chan, 0x7F);
 
-        if (info->channelType == AUDIOAPI_CHANNEL_TYPE_MONO) {
-            layer = cseq_layer_create(root);
-            cseq_ldlayer(chan, 0, layer);
-            cseq_instr(layer, channelNo);
-            cseq_notepan(layer, 0);
-            cseq_notedv(layer, PITCH_C4, length, 127);
-            cseq_section_end(layer);
-
-        } else if (info->channelType == AUDIOAPI_CHANNEL_TYPE_STEREO) {
-            layer = cseq_layer_create(root);
-            cseq_ldlayer(chan, 0, layer);
-            cseq_instr(layer, channelNo * 2);
-            cseq_notepan(layer, 0);
-            cseq_notedv(layer, PITCH_C4, length, 127);
-            cseq_section_end(layer);
-
-            layer = cseq_layer_create(root);
-            cseq_ldlayer(chan, 1, layer);
-            cseq_instr(layer, channelNo * 2 + 1);
-            cseq_notepan(layer, 127);
-            cseq_notedv(layer, PITCH_C4, length, 127);
-            cseq_section_end(layer);
+        if (info->channelType == AUDIOAPI_CHANNEL_TYPE_STEREO) {
+            cseq_pan(chan, (channelNo & 1) ? 0x7F : 0x00);
+        } else {
+            cseq_pan(chan, 0x40);
         }
+
+        layer = cseq_layer_create(root);
+        cseq_ldlayer(chan, 0, layer);
+        cseq_instr(layer, channelNo);
+        cseq_notepan(layer, 0x40);
+        cseq_notedv(layer, PITCH_C4, length, 127);
+        cseq_section_end(layer);
 
         cseq_delay(chan, length);
         cseq_section_end(chan);
