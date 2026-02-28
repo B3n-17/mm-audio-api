@@ -160,7 +160,7 @@ RECOMP_EXPORT s32 AudioApi_CreateStreamedSequence(AudioApiFileInfo* info, AudioA
         cseq_ldchan(seq, channelNo, chan);
         cseq_noshort(chan);
         cseq_panweight(chan, 0x7F);
-        cseq_notepri(chan, 1);
+        cseq_notepri(chan, 15);
         cseq_vol(chan, 0x7F);
 
         if (info->channelType == AUDIOAPI_CHANNEL_TYPE_STEREO) {
