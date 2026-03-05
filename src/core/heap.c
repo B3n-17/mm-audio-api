@@ -46,6 +46,7 @@
 #define RSP_CACHE_CAPACITY 2000
 
 #define gTatumsPerBeat (gAudioTatumInit[1])
+#define AUDIOAPI_MIN_NOTES 48
 
 typedef struct LoadBufferEntry {
     u8* addr;
@@ -268,6 +269,9 @@ RECOMP_PATCH void AudioHeap_Init(void) {
     // gAudioCtx.sampleDmaBufSize2 = spec->sampleDmaBufSize2;
 
     gAudioCtx.numNotes = spec->numNotes;
+    if (gAudioCtx.numNotes < AUDIOAPI_MIN_NOTES) {
+        gAudioCtx.numNotes = AUDIOAPI_MIN_NOTES;
+    }
     gAudioCtx.audioBufferParameters.numSequencePlayers = spec->numSequencePlayers;
 
     if (gAudioCtx.audioBufferParameters.numSequencePlayers > 5) {

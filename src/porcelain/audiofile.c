@@ -12,7 +12,7 @@
  *   2. Computes sequence length in tatums (48 per beat @ 25 BPM = 20 tatums/sec = 1 per frame).
  *   3. Builds a CSeq (compiled sequence) with:
  *      - One channel per decoded audio track (max 16 channels)
- *      - Each channel plays one note (C4) for the full duration at max velocity
+ *      - Each channel plays one note (C4) for the full duration at configurable velocity
  *      - Loop: infinite (loopCount=-1) → jump back to label; finite → play once and end
  *   4. Compiles CSeq to binary, registers it as a new sequence, binds the soundfont.
  *
@@ -39,16 +39,53 @@
 
 #define CREDITS_PART1_TOTAL_TATUMS 2537
 #define CREDITS_PART2_TOTAL_TATUMS 5053
+#define STREAMED_BASE_VOLUME 100
 
 /* Imported from resource.c porcelain layer (same mod) */
 RECOMP_IMPORT(".", s32 AudioApi_AddAudioFileFromFs(AudioApiFileInfo* info, char* dir, char* filename));
 RECOMP_IMPORT(".", uintptr_t AudioApi_GetResourceDevAddr(u32 resourceId, u32 arg1, u32 arg2));
 RECOMP_IMPORT(".", void AudioApi_SetWindfishReplacementSeqId(s32 seqId));
 
+static u8 AudioApi_ApplyVolumeOffset(s8 volumeOffset) {
+    return CLAMP((s32)STREAMED_BASE_VOLUME + volumeOffset, 0, 0x7F);
+}
+
+static AudioApiFileInfo AudioApi_FileInfoFromV2(const AudioApiFileInfo2* info2) {
+    return (AudioApiFileInfo){
+        info2->resourceId,
+        info2->trackCount,
+        info2->sampleRate,
+        info2->sampleCount,
+        info2->loopStart,
+        info2->loopEnd,
+        info2->loopCount,
+        info2->codec,
+        info2->channelType,
+        info2->cacheStrategy,
+    };
+}
+
+static void AudioApi_FileInfoToV2(AudioApiFileInfo2* info2, const AudioApiFileInfo* info) {
+    info2->resourceId = info->resourceId;
+    info2->trackCount = info->trackCount;
+    info2->sampleRate = info->sampleRate;
+    info2->sampleCount = info->sampleCount;
+    info2->loopStart = info->loopStart;
+    info2->loopEnd = info->loopEnd;
+    info2->loopCount = info->loopCount;
+    info2->codec = info->codec;
+    info2->channelType = info->channelType;
+    info2->cacheStrategy = info->cacheStrategy;
+}
+
+static s32 AudioApi_CreateStreamedSequenceImpl(AudioApiFileInfo* info, AudioApiSequenceIO seqIO, s8 volumeOffset) {
+    u8 noteVelocity;
+
 /* Builds a sequence + soundfont from a previously-loaded audio file described by info.
  * seqIO selects optional IO channel behavior (e.g. AUDIOAPI_SEQ_IO_BREMEN for march sync).
  * Returns seqId on success, -1 on failure. Caller must have already loaded the audio resource. */
-RECOMP_EXPORT s32 AudioApi_CreateStreamedSequence(AudioApiFileInfo* info, AudioApiSequenceIO seqIO) {
+    noteVelocity = AudioApi_ApplyVolumeOffset(volumeOffset);
+
     u32 channelCount, trackCount;
     u32 channelNo, trackNo, i;
     s32 seqId, fontId;
@@ -150,7 +187,7 @@ RECOMP_EXPORT s32 AudioApi_CreateStreamedSequence(AudioApiFileInfo* info, AudioA
 
     cseq_mutebhv(seq, 0x20);   /* mute behavior: stop notes */
     cseq_mutescale(seq, 0x32); /* mute scale: 50 */
-    cseq_vol(seq, 0x7F);      /* max volume */
+    cseq_vol(seq, 0x7F);
     cseq_initchan(seq, initChanMask);
 
     label = cseq_label_create(seq);
@@ -173,7 +210,7 @@ RECOMP_EXPORT s32 AudioApi_CreateStreamedSequence(AudioApiFileInfo* info, AudioA
         cseq_ldlayer(chan, 0, layer);
         cseq_instr(layer, channelNo);
         cseq_notepan(layer, 0x40);
-        cseq_notedv(layer, PITCH_C4, length, 127);
+        cseq_notedv(layer, PITCH_C4, length, noteVelocity);
         cseq_section_end(layer);
 
         cseq_delay(chan, length);
@@ -285,57 +322,93 @@ RECOMP_EXPORT s32 AudioApi_CreateStreamedSequence(AudioApiFileInfo* info, AudioA
     return seqId;
 }
 
+RECOMP_EXPORT s32 AudioApi_CreateStreamedSequence(AudioApiFileInfo* info, AudioApiSequenceIO seqIO) {
+    return AudioApi_CreateStreamedSequenceImpl(info, seqIO, 0);
+}
+
 /* High-level: load audio file → create streamed sequence for background music.
  * Policy:
  *   - loop markers present: always loop infinitely
  *   - no loop markers: play once
  * This avoids requiring mod authors to set finite loop counts correctly in files. */
-RECOMP_EXPORT s32 AudioApi_CreateStreamedBgm(AudioApiFileInfo* info, char* dir, char* filename,
-                                              AudioApiSequenceIO seqIO) {
-    AudioApiFileInfo defaultInfo = {0};
+RECOMP_EXPORT s32 AudioApi_CreateStreamedBgmEx(AudioApiFileInfo2* info2, char* dir, char* filename,
+                                                AudioApiSequenceIO seqIO) {
+    AudioApiFileInfo2 defaultInfo2 = {0};
+    AudioApiFileInfo info;
+    s8 volumeOffset;
 
-    if (info == NULL) {
-        info = &defaultInfo;
+    if (info2 == NULL) {
+        info2 = &defaultInfo2;
     }
 
-    if (!AudioApi_AddAudioFileFromFs(info, dir, filename)) {
+    info = AudioApi_FileInfoFromV2(info2);
+    volumeOffset = info2->volumeOffset;
+
+    if (!AudioApi_AddAudioFileFromFs(&info, dir, filename)) {
         return -1;
     }
 
-    if (info->channelType == AUDIOAPI_CHANNEL_TYPE_DEFAULT) {
-        info->channelType = info->trackCount & 1
+    if (info.channelType == AUDIOAPI_CHANNEL_TYPE_DEFAULT) {
+        info.channelType = info.trackCount & 1
             ? AUDIOAPI_CHANNEL_TYPE_MONO
             : AUDIOAPI_CHANNEL_TYPE_STEREO;
     }
 
     if (seqIO == AUDIOAPI_SEQ_IO_CREDITS_1 || seqIO == AUDIOAPI_SEQ_IO_CREDITS_2) {
-        info->loopCount = 0;
+        info.loopCount = 0;
     } else {
-        info->loopCount = (info->loopCount != 0) ? -1 : 0;
+        info.loopCount = (info.loopCount != 0) ? -1 : 0;
     }
 
-    return AudioApi_CreateStreamedSequence(info, seqIO);
+    AudioApi_FileInfoToV2(info2, &info);
+
+    return AudioApi_CreateStreamedSequenceImpl(&info, seqIO, volumeOffset);
+}
+
+RECOMP_EXPORT s32 AudioApi_CreateStreamedBgm(AudioApiFileInfo* info, char* dir, char* filename,
+                                              AudioApiSequenceIO seqIO) {
+    AudioApiFileInfo2 info2 = {0};
+    s32 seqId;
+
+    if (info != NULL) {
+        AudioApi_FileInfoToV2(&info2, info);
+    }
+
+    info2.volumeOffset = 0;
+
+    seqId = AudioApi_CreateStreamedBgmEx(&info2, dir, filename, seqIO);
+
+    if (info != NULL) {
+        *info = AudioApi_FileInfoFromV2(&info2);
+    }
+
+    return seqId;
 }
 
 /* High-level: load audio file → create one-shot sequence flagged as fanfare (ducks BGM).
  * Loop metadata from the file is ignored — fanfares always play once.
  * Exception: AUDIOAPI_SEQ_IO_BREMEN forces infinite loop (march needs continuous playback).
  * seqIO selects optional IO channel behavior (e.g. AUDIOAPI_SEQ_IO_BREMEN for march sync). */
-RECOMP_EXPORT s32 AudioApi_CreateStreamedFanfare(AudioApiFileInfo* info, char* dir, char* filename,
-                                                  AudioApiSequenceIO seqIO) {
-    AudioApiFileInfo defaultInfo = {0};
+RECOMP_EXPORT s32 AudioApi_CreateStreamedFanfareEx(AudioApiFileInfo2* info2, char* dir,
+                                                    char* filename, AudioApiSequenceIO seqIO) {
+    AudioApiFileInfo2 defaultInfo2 = {0};
+    AudioApiFileInfo info;
+    s8 volumeOffset;
     s32 seqId;
 
-    if (info == NULL) {
-        info = &defaultInfo;
+    if (info2 == NULL) {
+        info2 = &defaultInfo2;
     }
 
-    if (!AudioApi_AddAudioFileFromFs(info, dir, filename)) {
+    info = AudioApi_FileInfoFromV2(info2);
+    volumeOffset = info2->volumeOffset;
+
+    if (!AudioApi_AddAudioFileFromFs(&info, dir, filename)) {
         return -1;
     }
 
-    if (info->channelType == AUDIOAPI_CHANNEL_TYPE_DEFAULT) {
-        info->channelType = info->trackCount & 1
+    if (info.channelType == AUDIOAPI_CHANNEL_TYPE_DEFAULT) {
+        info.channelType = info.trackCount & 1
             ? AUDIOAPI_CHANNEL_TYPE_MONO
             : AUDIOAPI_CHANNEL_TYPE_STEREO;
     }
@@ -343,12 +416,14 @@ RECOMP_EXPORT s32 AudioApi_CreateStreamedFanfare(AudioApiFileInfo* info, char* d
     /* Fanfares play once by default — ignore loop metadata from the file.
      * Only loop if seqIO requires it (e.g. Bremen March needs infinite playback). */
     if (seqIO == AUDIOAPI_SEQ_IO_BREMEN) {
-        info->loopCount = -1;
+        info.loopCount = -1;
     } else {
-        info->loopCount = 0;
+        info.loopCount = 0;
     }
 
-    seqId = AudioApi_CreateStreamedSequence(info, seqIO);
+    AudioApi_FileInfoToV2(info2, &info);
+
+    seqId = AudioApi_CreateStreamedSequenceImpl(&info, seqIO, volumeOffset);
     if (seqId == -1) {
         return -1;
     }
@@ -358,6 +433,26 @@ RECOMP_EXPORT s32 AudioApi_CreateStreamedFanfare(AudioApiFileInfo* info, char* d
     }
 
     AudioApi_SetSequenceFlags(seqId, SEQ_FLAG_FANFARE);
+
+    return seqId;
+}
+
+RECOMP_EXPORT s32 AudioApi_CreateStreamedFanfare(AudioApiFileInfo* info, char* dir, char* filename,
+                                                  AudioApiSequenceIO seqIO) {
+    AudioApiFileInfo2 info2 = {0};
+    s32 seqId;
+
+    if (info != NULL) {
+        AudioApi_FileInfoToV2(&info2, info);
+    }
+
+    info2.volumeOffset = 0;
+
+    seqId = AudioApi_CreateStreamedFanfareEx(&info2, dir, filename, seqIO);
+
+    if (info != NULL) {
+        *info = AudioApi_FileInfoFromV2(&info2);
+    }
 
     return seqId;
 }

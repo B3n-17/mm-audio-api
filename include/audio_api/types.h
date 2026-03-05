@@ -78,6 +78,20 @@ typedef struct AudioApiFileInfo {
     AudioApiCacheStrategy cacheStrategy;
 } AudioApiFileInfo;
 
+typedef struct AudioApiFileInfo2 {
+    u32 resourceId;
+    u32 trackCount;
+    u32 sampleRate;
+    u32 sampleCount;
+    u32 loopStart;
+    u32 loopEnd;
+    s32 loopCount;
+    AudioApiCodec codec;
+    AudioApiChannelType channelType;
+    AudioApiCacheStrategy cacheStrategy;
+    s8 volumeOffset;
+} AudioApiFileInfo2;
+
 typedef struct AudioApiResourceInfo {
     u32 resourceId;
     u32 filesize;

@@ -123,6 +123,7 @@ extern u8 sSpatialSubBgmFadeTimer;
 extern u8 sRomaniSingingTimer;
 extern u8 sFanfareState;
 extern u8 sAllPlayersMutedExceptSystemAndOcarina;
+extern u8 sMuteOnlySfxAndAmbienceSeq;
 
 // Sequence Data
 extern u8 sSeqFlags[];
@@ -1449,6 +1450,15 @@ RECOMP_HOOK_RETURN("AudioSeq_UpdateActiveSequences") void AudioApi_UpdateActiveS
 }
 
 // ======== RECOMP-SPECIFIC OVERRIDES ========
+
+// During Final Hours scene transitions, vanilla mutes all SFX channels. We skip that
+// so SFX remains audible throughout the transition. We still set sMuteOnlySfxAndAmbienceSeq
+// (needed for Audio_SetSpec to use the mute-only reverb-fade heap reset path) and still
+// stop ambience, but omit the SEQCMD_SET_CHANNEL_VOLUME(SFX, ch, duration/2, 0) calls.
+RECOMP_PATCH void Audio_MuteSfxAndAmbienceSeqExceptSysAndOca(u16 duration) {
+    sMuteOnlySfxAndAmbienceSeq = true;
+    SEQCMD_STOP_SEQUENCE(SEQ_PLAYER_AMBIENCE, (duration * 3) / 2);
+}
 
 // Compatibility stub: vanilla channel arbitration is intentionally disabled on recomp.
 // Downstream mods own channel-routing policy for custom mixes.
