@@ -78,6 +78,7 @@
 #define SEQ_RESUME_POINT_NONE 0xC0
 #define AMBIENCE_CHANNEL_PROPERTIES_ENTRIES_MAX 33
 #define SEQ_FONT_ENTRY_SIZE 5
+#define SCENE_RESTART_RETRY_MAX 0xFF
 
 #define NB_BGM_MORNING 128
 
@@ -168,6 +169,7 @@ s32 sExtPrevSceneSeqId        = NA_BGM_GENERAL_SFX;
 s32 sExtObjSoundMainBgmSeqId  = NA_BGM_GENERAL_SFX;
 
 u16 sExtRequestedSceneSeqArgs = 0x0000;
+u8 sExtRequestedSceneDayMinusOne = 0;
 u16 sExtFanfareSeqArgs        = 0x0000;
 u16 sExtPrevAmbienceSeqArgs   = 0x0000;
 u16 sExtPrevMainBgmSeqArgs    = 0x0000;
@@ -229,6 +231,23 @@ typedef enum {
 RECOMP_DECLARE_EVENT(AudioApi_BgmBlendIntent(AudioApiBgmBlendSource source, s8 volumeSplit));
 
 static s8 sLastBgmBlendIntent[3] = { -1, -1, -1 };
+static s16 sPrevSfxVolumeDuration = -1;
+static u8 sResetStep3HadMuteOnly = 0;
+static u8 sPendingSfxRestoreFrames = 0;
+static u8 sSceneRestartRetryFrames = 0;
+
+static s32 AudioApi_GetSfxMutedMask(void) {
+    s32 mask = 0;
+    u32 i;
+
+    for (i = 0; i < ARRAY_COUNT(gSfxBankMuted); i++) {
+        if (gSfxBankMuted[i]) {
+            mask |= (1 << i);
+        }
+    }
+
+    return mask;
+}
 
 static void AudioApi_EmitBgmBlendIntent(AudioApiBgmBlendSource source, s8 volumeSplit) {
     s8 clamped = CLAMP(volumeSplit, 0, 127);
@@ -848,15 +867,30 @@ RECOMP_PATCH void Audio_PlayMorningSceneSequence(u16 seqId, u8 dayMinusOne) {
 }
 
 RECOMP_EXPORT void AudioApi_PlaySceneSequence(s32 seqId, u16 seqArgs, u8 dayMinusOne) {
-    if (sExtRequestedSceneSeqId != seqId || sExtRequestedSceneSeqArgs != seqArgs) {
+    bool requestChanged;
+
+    requestChanged = (sExtRequestedSceneSeqId != seqId) || (sExtRequestedSceneSeqArgs != seqArgs);
+
+    if (requestChanged || !gAudioCtx.seqPlayers[SEQ_PLAYER_BGM_MAIN].enabled) {
         if (seqId == NA_BGM_AMBIENCE) {
             Audio_PlayAmbience(AMBIENCE_ID_08);
         } else if ((seqId != NA_BGM_FINAL_HOURS) || (sExtPrevMainBgmSeqId == NA_BGM_DISABLED)) {
             AudioApi_StartSceneSequence(seqId, seqArgs);
-            SEQCMD_SET_SEQPLAYER_IO(SEQ_PLAYER_BGM_MAIN, 4, dayMinusOne);
         }
+
         sExtRequestedSceneSeqId = seqId;
         sExtRequestedSceneSeqArgs = seqArgs;
+        sExtRequestedSceneDayMinusOne = dayMinusOne;
+
+        if (seqId != NA_BGM_AMBIENCE) {
+            sSceneRestartRetryFrames = SCENE_RESTART_RETRY_MAX;
+        }
+    }
+
+    if (seqId != NA_BGM_AMBIENCE) {
+        if ((seqId != NA_BGM_FINAL_HOURS) || (sExtPrevMainBgmSeqId == NA_BGM_DISABLED)) {
+            SEQCMD_SET_SEQPLAYER_IO(SEQ_PLAYER_BGM_MAIN, 4, dayMinusOne);
+        }
     }
 }
 
@@ -1350,8 +1384,16 @@ RECOMP_PATCH void AudioSeq_ResetActiveSequences(void) {
 }
 
 RECOMP_PATCH void Audio_ResetRequestedSceneSeqId(void) {
+    if ((sExtRequestedSceneSeqId != NA_BGM_DISABLED) && (sExtRequestedSceneSeqId != NA_BGM_AMBIENCE) &&
+        (AudioApi_GetActiveSeqId(SEQ_PLAYER_BGM_MAIN) == NA_BGM_DISABLED)) {
+        sSceneRestartRetryFrames = SCENE_RESTART_RETRY_MAX;
+        return;
+    }
+
     sExtRequestedSceneSeqId = NA_BGM_DISABLED;
     sExtRequestedSceneSeqArgs = 0x0000;
+    sExtRequestedSceneDayMinusOne = 0;
+    sSceneRestartRetryFrames = 0;
 }
 
 RECOMP_HOOK("Audio_ResetData") void AudioApi_ResetData(void) {
@@ -1413,6 +1455,31 @@ RECOMP_HOOK("AudioSeq_UpdateActiveSequences") void AudioApi_UpdateActiveSequence
             }
         }
     }
+
+    if (gAudioCtx.seqPlayers[SEQ_PLAYER_BGM_MAIN].enabled) {
+        sSceneRestartRetryFrames = 0;
+    } else if ((sSceneRestartRetryFrames != 0) && (sExtRequestedSceneSeqId != NA_BGM_DISABLED) &&
+               (sExtRequestedSceneSeqId != NA_BGM_AMBIENCE)) {
+        if (sStartSeqDisabled == 0) {
+            if (gActiveSeqs[SEQ_PLAYER_BGM_MAIN].isWaitingForFonts) {
+                gActiveSeqs[SEQ_PLAYER_BGM_MAIN].isWaitingForFonts = false;
+            }
+
+            if ((sExtRequestedSceneSeqId != NA_BGM_FINAL_HOURS) || (sExtPrevMainBgmSeqId == NA_BGM_DISABLED)) {
+                AudioApi_StartSceneSequence(sExtRequestedSceneSeqId, sExtRequestedSceneSeqArgs);
+                SEQCMD_SET_SEQPLAYER_IO(SEQ_PLAYER_BGM_MAIN, 4, sExtRequestedSceneDayMinusOne);
+            }
+            sSceneRestartRetryFrames--;
+        }
+    }
+
+    if (sPendingSfxRestoreFrames != 0) {
+        sPendingSfxRestoreFrames--;
+        if ((sPendingSfxRestoreFrames == 0) && gAudioCtx.seqPlayers[SEQ_PLAYER_SFX].enabled &&
+            (sAudioPauseState == AUDIO_PAUSE_STATE_CLOSED) && !sAudioCutsceneFlag) {
+            Audio_SetSfxVolumeExceptSystemAndOcarinaBanks(0x7F);
+        }
+    }
 }
 
 RECOMP_HOOK_RETURN("AudioSeq_UpdateActiveSequences") void AudioApi_UpdateActiveSequencesPart2() {
@@ -1451,10 +1518,6 @@ RECOMP_HOOK_RETURN("AudioSeq_UpdateActiveSequences") void AudioApi_UpdateActiveS
 
 // ======== RECOMP-SPECIFIC OVERRIDES ========
 
-// During Final Hours scene transitions, vanilla mutes all SFX channels. We skip that
-// so SFX remains audible throughout the transition. We still set sMuteOnlySfxAndAmbienceSeq
-// (needed for Audio_SetSpec to use the mute-only reverb-fade heap reset path) and still
-// stop ambience, but omit the SEQCMD_SET_CHANNEL_VOLUME(SFX, ch, duration/2, 0) calls.
 RECOMP_PATCH void Audio_MuteSfxAndAmbienceSeqExceptSysAndOca(u16 duration) {
     sMuteOnlySfxAndAmbienceSeq = true;
     SEQCMD_STOP_SEQUENCE(SEQ_PLAYER_AMBIENCE, (duration * 3) / 2);
