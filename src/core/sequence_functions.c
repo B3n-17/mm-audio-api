@@ -143,6 +143,7 @@ extern s8 sAudioCutsceneFlag;
 
 extern void Audio_MuteBgmPlayersForFanfare(void);
 extern void Audio_StopSequenceAtPos(u8 seqPlayerIndex, u8 volumeFadeTimer);
+extern void Audio_SetSfxVolumeExceptSystemAndOcarinaBanks(u8 volume);
 
 extern void Audio_SetObjSoundProperties(u8 seqPlayerIndex, Vec3f* pos, s16 flags,
                                         f32 minDist, f32 maxDist, f32 maxVolume, f32 minVolume);
@@ -235,19 +236,6 @@ static s16 sPrevSfxVolumeDuration = -1;
 static u8 sResetStep3HadMuteOnly = 0;
 static u8 sPendingSfxRestoreFrames = 0;
 static u8 sSceneRestartRetryFrames = 0;
-
-static s32 AudioApi_GetSfxMutedMask(void) {
-    s32 mask = 0;
-    u32 i;
-
-    for (i = 0; i < ARRAY_COUNT(gSfxBankMuted); i++) {
-        if (gSfxBankMuted[i]) {
-            mask |= (1 << i);
-        }
-    }
-
-    return mask;
-}
 
 static void AudioApi_EmitBgmBlendIntent(AudioApiBgmBlendSource source, s8 volumeSplit) {
     s8 clamped = CLAMP(volumeSplit, 0, 127);
