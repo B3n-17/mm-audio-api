@@ -38,6 +38,10 @@ target_link_libraries(${TARGET_NAME}
         opusfile
 )
 
+if (WIN32)
+    target_link_libraries(${TARGET_NAME} PRIVATE ws2_32)
+endif()
+
 target_include_directories(${TARGET_NAME}
     PRIVATE
         ${CMAKE_SOURCE_DIR}/offline_build

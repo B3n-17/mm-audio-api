@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Audio API Debug</title>
+  <style>
+    :root {
+      --bg0: #0f1a22;
+      --bg1: #152737;
+      --card: #10212fdd;
+      --line: #2a4b61;
+      --text: #dff1ff;
+      --muted: #9bbad0;
+      --accent: #55d6be;
+      --warn: #ffbe5c;
+      --bad: #ff6a6a;
+      --mono: "JetBrains Mono", "Cascadia Mono", "SFMono-Regular", Menlo, monospace;
+      --sans: "IBM Plex Sans", "Segoe UI", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: var(--sans);
+      color: var(--text);
+      background: radial-gradient(1200px 500px at 10% 0%, #244660, transparent), linear-gradient(160deg, var(--bg0), var(--bg1));
+      min-height: 100vh;
+    }
+    .wrap { max-width: 1200px; margin: 0 auto; padding: 20px; }
+    h1 { margin: 0 0 12px; font-size: 24px; letter-spacing: 0.02em; }
+    .status {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 10px 12px;
+      backdrop-filter: blur(3px);
+    }
+    .k { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.07em; }
+    .v { font-family: var(--mono); font-size: 18px; margin-top: 4px; }
+    .good { color: var(--accent); }
+    .warn { color: var(--warn); }
+    .bad { color: var(--bad); }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-family: var(--mono);
+      font-size: 12px;
+    }
+    th, td { padding: 7px 8px; border-bottom: 1px solid #1f3b50; text-align: left; }
+    th { color: var(--muted); font-weight: 600; }
+    .grid { display: grid; grid-template-columns: 1fr; gap: 12px; }
+    @media (min-width: 980px) { .grid { grid-template-columns: 1fr 1fr; } }
+    .events { max-height: 420px; overflow: auto; }
+    .pill { display: inline-block; border: 1px solid var(--line); border-radius: 999px; padding: 2px 8px; font-size: 11px; color: var(--muted); }
+    .chviz { min-width: 280px; display: grid; gap: 3px; }
+    .chrow { display: grid; grid-template-columns: 26px 1fr 52px; align-items: center; gap: 6px; }
+    .chid { color: var(--muted); font-size: 11px; }
+    .pantrack { position: relative; height: 8px; border-radius: 999px; background: #1b3548; border: 1px solid #2a4b61; }
+    .pancenter { position: absolute; left: 50%; top: -1px; bottom: -1px; width: 1px; background: #88a7bd; opacity: 0.8; }
+    .panpos { position: absolute; top: 0; bottom: 0; width: 2px; background: #7fe3d1; }
+    .voltxt { font-size: 11px; color: var(--text); text-align: right; }
+    .is-off .pantrack { opacity: 0.35; }
+    .is-off .voltxt { color: var(--muted); }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Audio API Live Debug</h1>
+    <div class="status">
+      <div class="card"><div class="k">Connection</div><div id="conn" class="v">connecting...</div></div>
+      <div class="card"><div class="k">Init Phase</div><div id="phase" class="v">-</div></div>
+      <div class="card"><div class="k">Last Event ID</div><div id="lastId" class="v">0</div></div>
+      <div class="card"><div class="k">Dropped Events</div><div id="dropped" class="v">0</div></div>
+      <div class="card"><div class="k">Main/Sub/Fanfare</div><div id="quickSeq" class="v">-</div></div>
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+          <span class="pill">/snapshot</span>
+          <span id="snapTs" class="k">ts: -</span>
+        </div>
+        <table>
+          <thead><tr><th>Player</th><th>Role</th><th>SeqId</th><th>En</th><th>Ch</th><th>Pan L/C/R(avg)</th><th>Notes A/D/R</th><th>Ch0..3 pan@vol</th><th>L0..3 pan/notePan</th><th>L0..3 tgtLR/curLR</th><th>Seq IO</th></tr></thead>
+          <tbody id="players"></tbody>
+        </table>
+      </div>
+
+      <div class="card">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+          <span class="pill">/events</span>
+          <span class="k">latest first</span>
+        </div>
+        <div class="events">
+          <table>
+            <thead><tr><th>ID</th><th>Tag</th><th>a</th><th>b</th><th>c</th><th>d</th><th>ts(ms)</th></tr></thead>
+            <tbody id="events"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const tags = {
+      1: 'QUEUE_EXT_CMD',
+      2: 'PROCESS_SEQ_CMD',
+      3: 'START_SEQUENCE',
+      4: 'STOP_SEQUENCE',
+      5: 'PLAY_SCENE_SEQUENCE',
+      6: 'PLAY_SUB_BGM',
+      7: 'PLAY_FANFARE',
+      8: 'PLAY_OBJ_BGM',
+      9: 'PLAY_CUTSCENE_SEQUENCE',
+      10: 'START_MORNING_SEQUENCE',
+      11: 'BGM_BLEND_INTENT',
+      12: 'SEQ_IO_CHANGE',
+      13: 'MUTE_ALL_EXCEPT_SYS_OCA',
+      14: 'SET_SFX_VOL_EXCEPT',
+      15: 'SFX_VOL_TRANSITION',
+      16: 'MUTE_SFX_AMBIENCE_ONLY',
+      17: 'START_SFX_PLAYER',
+      18: 'MUTE_SFX_AMBIENCE_SYS_OCA',
+      19: 'SET_SPEC',
+      20: 'RESET_HEAP_STEP3',
+      21: 'SFX_MUTE_BANKS_BEFORE',
+      22: 'SFX_MUTE_BANKS_AFTER',
+      23: 'SFX_BANK_MASK',
+    };
+
+    let since = 0;
+    const eventRows = [];
+
+    async function j(url) {
+      const res = await fetch(url, { cache: 'no-store' });
+      if (!res.ok) throw new Error(url + ' ' + res.status);
+      return res.json();
+    }
+
+    function setConn(ok) {
+      const el = document.getElementById('conn');
+      el.textContent = ok ? 'online' : 'offline';
+      el.className = 'v ' + (ok ? 'good' : 'bad');
+    }
+
+    function renderEvents() {
+      const tbody = document.getElementById('events');
+      tbody.innerHTML = eventRows.slice(-400).reverse().map(e =>
+        `<tr><td>${e.id}</td><td>${tags[e.tag] || e.tag}</td><td>${e.a}</td><td>${e.b}</td><td>${e.c}</td><td>${e.d}</td><td>${e.ts_ms}</td></tr>`
+      ).join('');
+    }
+
+    function renderPlayers(snapshot) {
+      const tbody = document.getElementById('players');
+      tbody.innerHTML = snapshot.players.map(p => {
+        const io = (p.seq_io || []).join('/');
+        const pan = `${p.pan_left_count}/${p.pan_center_count}/${p.pan_right_count} (${p.pan_average})`;
+        const notes = `${p.notes_active}/${p.notes_decaying}/${p.notes_releasing}`;
+        const chPan = p.ch_pan || [];
+        const chVol = p.ch_vol_milli || [];
+        const chEn = p.ch_enabled || [];
+        const layerPan = p.layer_pan || [];
+        const layerNotePan = p.layer_note_pan || [];
+        const noteTL = p.layer_note_target_l || [];
+        const noteTR = p.layer_note_target_r || [];
+        const noteCL = p.layer_note_cur_l || [];
+        const noteCR = p.layer_note_cur_r || [];
+        const first4 = [0, 1, 2, 3].map(i => {
+          const enabled = !!chEn[i];
+          const panValue = Number.isFinite(chPan[i]) ? chPan[i] : -1;
+          const vol = (Number.isFinite(chVol[i]) ? chVol[i] : 0) / 1000;
+          const panPct = panValue < 0 ? 50 : Math.max(0, Math.min(127, panValue)) / 127 * 100;
+          return `<div class="chrow ${enabled ? '' : 'is-off'}"><div class="chid">ch${i}</div><div class="pantrack"><span class="pancenter"></span><span class="panpos" style="left:${panPct}%"></span></div><div class="voltxt">${enabled ? vol.toFixed(2) : '-'}</div></div>`;
+        }).join('');
+        const layers = [0, 1, 2, 3].map(ch => {
+          const base = ch * 4;
+          const row = [0, 1, 2, 3].map(l => {
+            const lp = layerPan[base + l];
+            const lnp = layerNotePan[base + l];
+            return lp < 0 ? '-' : `${lp}/${lnp}`;
+          }).join(' ');
+          return `<div class="chrow"><div class="chid">ch${ch}</div><div style="grid-column: span 2; font-size:11px; color:var(--muted)">${row}</div></div>`;
+        }).join('');
+        const vols = [0, 1, 2, 3].map(ch => {
+          const base = ch * 4;
+          const row = [0, 1, 2, 3].map(l => {
+            const tl = noteTL[base + l];
+            const tr = noteTR[base + l];
+            const cl = noteCL[base + l];
+            const cr = noteCR[base + l];
+            return tl < 0 ? '-' : `${tl}/${tr}|${cl}/${cr}`;
+          }).join(' ');
+          return `<div class="chrow"><div class="chid">ch${ch}</div><div style="grid-column: span 2; font-size:11px; color:var(--muted)">${row}</div></div>`;
+        }).join('');
+        return `<tr><td>${p.player}</td><td>${p.role}</td><td>${p.seq_id}</td><td>${p.enabled}</td><td>${p.active_channel_count}</td><td>${pan}</td><td>${notes}</td><td><div class="chviz">${first4}</div></td><td><div class="chviz">${layers}</div></td><td><div class="chviz">${vols}</div></td><td>${io}</td></tr>`;
+      }).join('');
+    }
+
+    async function tick() {
+      try {
+        const [snapshot, events] = await Promise.all([
+          j('/snapshot'),
+          j('/events?since=' + since + '&limit=300')
+        ]);
+
+        setConn(true);
+
+        document.getElementById('phase').textContent = snapshot.init_phase;
+        document.getElementById('snapTs').textContent = 'ts: ' + snapshot.ts_ms;
+        document.getElementById('quickSeq').textContent = `${snapshot.main_seq_id} / ${snapshot.sub_seq_id} / ${snapshot.fanfare_seq_id}`;
+        document.getElementById('lastId').textContent = events.last_event_id;
+        document.getElementById('dropped').textContent = events.dropped_total;
+        document.getElementById('dropped').className = 'v ' + (events.dropped_total > 0 ? 'warn' : 'good');
+
+        renderPlayers(snapshot);
+
+        if (events.events.length) {
+          since = events.events[events.events.length - 1].id;
+          eventRows.push(...events.events);
+          if (eventRows.length > 3000) eventRows.splice(0, eventRows.length - 3000);
+          renderEvents();
+        }
+      } catch (err) {
+        setConn(false);
+      }
+    }
+
+    setInterval(tick, 300);
+    tick();
+  </script>
+</body>
+</html>

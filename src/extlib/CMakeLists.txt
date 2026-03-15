@@ -15,5 +15,6 @@ target_sources(${TARGET_NAME} PUBLIC
     "decoder/mp3.cpp"
     "decoder/vorbis.cpp"
     "decoder/opus.cpp"
+    "debug.cpp"
     "utils.cpp"
 )

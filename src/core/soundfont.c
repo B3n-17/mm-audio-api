@@ -932,8 +932,22 @@ RECOMP_PATCH void AudioLoad_RelocateSample(TunedSample* tunedSample, void* fontD
     uintptr_t baseAddr;
 
     if ((sample->size != 0) && (sample->isRelocated != true)) {
-        sample->loop = RELOC_TO_RAM(sample->loop, fontData);
-        sample->book = RELOC_TO_RAM(sample->book, fontData);
+        AdpcmLoop* loop = RELOC_TO_RAM(sample->loop, fontData);
+        AdpcmBook* book = RELOC_TO_RAM(sample->book, fontData);
+
+        // Evict any stale RSP cache entries for loop predictor and codebook data. These are
+        // cached by synthesis via AudioApi_RspCacheMemcpy; invalidate before the pointers are
+        // updated so a replaced soundfont reusing the same address range gets a fresh copy.
+        if (loop != NULL) {
+            AudioApi_RspCacheInvalidateAddr(loop->predictorState, sizeof(loop->predictorState));
+        }
+        if (book != NULL) {
+            u32 numEntries = SAMPLES_PER_FRAME * book->header.order * book->header.numPredictors;
+            AudioApi_RspCacheInvalidateAddr(book->codeBook, sizeof(s16) * numEntries);
+        }
+
+        sample->loop = loop;
+        sample->book = book;
         sample->isRelocated = true;
 
         if (sample->medium == 0) {

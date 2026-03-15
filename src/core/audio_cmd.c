@@ -1,4 +1,5 @@
 #include <core/audio_cmd.h>
+#include <core/debug.h>
 #include <recomp/modding.h>
 
 /*
@@ -82,6 +83,7 @@ RECOMP_HOOK("AudioThread_ProcessGlobalCmd") void AudioApi_ProcessGlobalCmd(Audio
 RECOMP_EXPORT void AudioApi_QueueExtendedSeqCmd(u32 op, u32 cmd, u32 arg1, s32 seqId) {
     cmd |= (op & 0xF) << 28;
     RecompQueue_Push(sAudioSeqCmdQueue, op, cmd, arg1, (void**)&seqId);
+    AudioApi_DebugEvent(AUDIOAPI_DEBUG_EVENT_QUEUE_EXT_CMD, op, seqId, cmd, arg1);
 }
 
 /* PATCH: Replaces vanilla AudioSeq_QueueSeqCmd. Redirects all seq cmds into our RecompQueue.
@@ -111,6 +113,7 @@ void AudioApi_ProcessSeqCmd(RecompQueueCmd* cmd) {
     u32 outNumFonts;
 
     seqPlayerIndex = (cmd->arg0 & SEQCMD_SEQPLAYER_MASK) >> 24;
+    AudioApi_DebugEvent(AUDIOAPI_DEBUG_EVENT_PROCESS_SEQ_CMD, cmd->op, seqPlayerIndex, cmd->asInt, cmd->arg0);
 
     switch (cmd->op) {
     case SEQCMD_OP_PLAY_SEQUENCE:

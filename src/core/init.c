@@ -3,6 +3,7 @@
 #include <recomp/recompconfig.h>
 #include <recomp/recomputils.h>
 #include <utils/queue.h>
+#include <core/debug.h>
 #include <core/heap.h>
 #include <core/load.h>
 
@@ -48,6 +49,7 @@ RECOMP_IMPORT(".", bool AudioApiNative_Tick());
 RECOMP_CALLBACK(".", AudioApi_InitInternal) void AudioApi_ExtLibInit() {
     unsigned char* mod_folder = recomp_get_mod_folder_path();
     AudioApiNative_Init(6, mod_folder); // log_level 6 = verbose
+    AudioApi_DebugInitFromConfig();
     recomp_free(mod_folder);
 }
 
@@ -59,6 +61,7 @@ RECOMP_CALLBACK(".", AudioApi_ReadyInternal) void AudioApi_ExtLibReady() {
 /* Per-frame tick for native extlib — drives async decode, resource streaming, etc. */
 RECOMP_HOOK_RETURN("AudioThread_UpdateImpl") void on_AudioThread_UpdateImpl() {
     AudioApiNative_Tick();
+    AudioApi_DebugSyncSnapshot();
 }
 
 /*

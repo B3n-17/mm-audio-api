@@ -2,6 +2,7 @@
 #include <global.h>
 #include <recomp/modding.h>
 #include <core/audio_cmd.h>
+#include <core/debug.h>
 
 #include <recomp/recomputils.h>
 #include <recomp/recompconfig.h>
@@ -79,6 +80,7 @@
 #define AMBIENCE_CHANNEL_PROPERTIES_ENTRIES_MAX 33
 #define SEQ_FONT_ENTRY_SIZE 5
 #define SCENE_RESTART_RETRY_MAX 0xFF
+#define AUDIOAPI_FANFARE_SEQ_NODUCK 74
 
 #define NB_BGM_MORNING 128
 
@@ -125,6 +127,11 @@ extern u8 sRomaniSingingTimer;
 extern u8 sFanfareState;
 extern u8 sAllPlayersMutedExceptSystemAndOcarina;
 extern u8 sMuteOnlySfxAndAmbienceSeq;
+extern u8 gSfxBankMuted[7];
+extern u16 sSfxVolumeDuration;
+extern f32 sSfxVolumeTarget;
+extern f32 sSfxVolumeRate;
+extern f32 gSfxVolume;
 
 // Sequence Data
 extern u8 sSeqFlags[];
@@ -144,6 +151,7 @@ extern s8 sAudioCutsceneFlag;
 extern void Audio_MuteBgmPlayersForFanfare(void);
 extern void Audio_StopSequenceAtPos(u8 seqPlayerIndex, u8 volumeFadeTimer);
 extern void Audio_SetSfxVolumeExceptSystemAndOcarinaBanks(u8 volume);
+extern void AudioSfx_ResetSfxChannelState(void);
 
 extern void Audio_SetObjSoundProperties(u8 seqPlayerIndex, Vec3f* pos, s16 flags,
                                         f32 minDist, f32 maxDist, f32 maxVolume, f32 minVolume);
@@ -237,6 +245,19 @@ static u8 sResetStep3HadMuteOnly = 0;
 static u8 sPendingSfxRestoreFrames = 0;
 static u8 sSceneRestartRetryFrames = 0;
 
+static s32 AudioApi_GetSfxMutedMask(void) {
+    s32 mask = 0;
+    u32 i;
+
+    for (i = 0; i < ARRAY_COUNT(gSfxBankMuted); i++) {
+        if (gSfxBankMuted[i]) {
+            mask |= (1 << i);
+        }
+    }
+
+    return mask;
+}
+
 static void AudioApi_EmitBgmBlendIntent(AudioApiBgmBlendSource source, s8 volumeSplit) {
     s8 clamped = CLAMP(volumeSplit, 0, 127);
 
@@ -245,7 +266,26 @@ static void AudioApi_EmitBgmBlendIntent(AudioApiBgmBlendSource source, s8 volume
     }
 
     sLastBgmBlendIntent[source] = clamped;
+    AudioApi_DebugEvent(AUDIOAPI_DEBUG_EVENT_BGM_BLEND_INTENT, source, clamped,
+                        gExtActiveSeqs[SEQ_PLAYER_BGM_MAIN].seqId,
+                        gExtActiveSeqs[SEQ_PLAYER_BGM_SUB].seqId);
     AudioApi_BgmBlendIntent(source, clamped);
+}
+
+static void AudioApi_RestoreSfxAfterSceneStart(s32 seqId) {
+    if (seqId != NA_BGM_FINAL_HOURS) {
+        return;
+    }
+
+    if (sAudioPauseState != AUDIO_PAUSE_STATE_CLOSED || sAudioCutsceneFlag) {
+        return;
+    }
+
+    if (sAllPlayersMutedExceptSystemAndOcarina) {
+        sAllPlayersMutedExceptSystemAndOcarina = false;
+    }
+
+    Audio_SetSfxVolumeExceptSystemAndOcarinaBanks(0x7F);
 }
 
 // ======== MAIN START, STOP, GETTER, SETTER FUNCTIONS ========
@@ -261,6 +301,7 @@ RECOMP_EXPORT void AudioApi_StartSequence(u8 seqPlayerIndex, s32 seqId, u16 seqA
     }
 
     if (!sStartSeqDisabled || (seqPlayerIndex == SEQ_PLAYER_SFX)) {
+        AudioApi_DebugEvent(AUDIOAPI_DEBUG_EVENT_START_SEQUENCE, seqPlayerIndex, seqId, seqArgs, fadeInDuration);
         seqArgs &= 0x7F;
         if (seqArgs == 0x7F) {
             // fadeInDuration interpreted as seconds, 60 is refresh rate and does not account for PAL
@@ -306,6 +347,8 @@ RECOMP_PATCH void AudioSeq_StartSequence(u8 seqPlayerIndex, u8 seqId, u8 seqArgs
 }
 
 RECOMP_PATCH void AudioSeq_StopSequence(u8 seqPlayerIndex, u16 fadeOutDuration) {
+    AudioApi_DebugEvent(AUDIOAPI_DEBUG_EVENT_STOP_SEQUENCE, seqPlayerIndex,
+                        gExtActiveSeqs[seqPlayerIndex].seqId, fadeOutDuration, 0);
     fadeOutDuration = (fadeOutDuration * (u16)gAudioCtx.audioBufferParameters.updatesPerFrame) / 4;
     AUDIOCMD_GLOBAL_DISABLE_SEQPLAYER(seqPlayerIndex, fadeOutDuration);
     gExtActiveSeqs[seqPlayerIndex].seqId = NA_BGM_DISABLED;
@@ -433,6 +476,8 @@ RECOMP_EXPORT void AudioApi_PlayObjSoundBgm(Vec3f* pos, s32 seqId) {
     u8 fadeInDuration;
 
     // cmdVal omits cmdOp because SEQCMD_OP_PLAY_SEQUENCE is opcode 0 (matches decomp)
+    AudioApi_DebugEvent(AUDIOAPI_DEBUG_EVENT_PLAY_OBJ_BGM, seqId, seqId0, pos != NULL, sIsFinalHoursOrSoaring);
+
     if ((seqId0 == NA_BGM_FINAL_HOURS) || sIsFinalHoursOrSoaring
         || !AudioSeq_IsSeqCmdNotQueued(NA_BGM_FINAL_HOURS, SEQCMD_ALL_MASK)) {
         sIsFinalHoursOrSoaring = true;
@@ -549,6 +594,7 @@ RECOMP_PATCH void Audio_UpdateObjSoundFanfare(void) {
 // ======== OTHER START STOP FUNCTIONS ========
 
 RECOMP_EXPORT void AudioApi_PlaySubBgm(s32 seqId, u16 seqArgs) {
+    AudioApi_DebugEvent(AUDIOAPI_DEBUG_EVENT_PLAY_SUB_BGM, seqId, seqArgs, 0, 0);
     AudioSeq_SetVolumeScale(SEQ_PLAYER_BGM_SUB, VOL_SCALE_INDEX_BGM_SUB, 0x7F, 0);
     SEQCMD_EXTENDED_PLAY_SEQUENCE(SEQ_PLAYER_BGM_SUB, 0, seqArgs, seqId);
     AudioSeq_SetVolumeScale(SEQ_PLAYER_BGM_MAIN, VOL_SCALE_INDEX_BGM_SUB, 0, 5);
@@ -646,8 +692,30 @@ RECOMP_PATCH void Audio_PlaySubBgmAtPosWithFilter(Vec3f* pos, u8 seqId, f32 maxD
 }
 
 RECOMP_PATCH void Audio_UpdateSubBgmAtPos(void) {
-    if (sSpatialSubBgmFadeTimer != 0) {
+    if ((sSpatialSubBgmFadeTimer != 0) && (sAudioPauseState == AUDIO_PAUSE_STATE_CLOSED)) {
         if (sSpatialSeqFlags == 0) {
+            if (sSpatialSeqIsActive[SEQ_PLAYER_BGM_SUB] &&
+                (AudioApi_GetActiveSeqId(SEQ_PLAYER_BGM_SUB) == NA_BGM_SONG_OF_STORMS)) {
+                // Interactions like box breaks/bell hits can cause brief gaps where
+                // the actor doesn't refresh positional sub-BGM for a few ticks.
+                // Give Guru-Guru extra grace here, but still allow it to stop
+                // naturally on room/scene transitions when updates don't resume.
+                if (sSpatialSubBgmFadeTimer == 4) {
+                    sSpatialSubBgmFadeTimer = 12;
+                }
+                if (sSpatialSubBgmFadeTimer > 1) {
+                    sSpatialSubBgmFadeTimer--;
+                    return;
+                }
+            }
+
+            if (AudioApi_GetActiveSeqId(SEQ_PLAYER_FANFARE) != NA_BGM_DISABLED) {
+                // Short fanfares (e.g. rupee pickup) can temporarily stall positional
+                // updates from actors like Guru-Guru. Hold the sub-BGM request until
+                // the fanfare ends instead of fading/stopping it.
+                return;
+            }
+
             // No guru-guru position update this tick: fade the sub-BGM out instead
             // of re-applying stale positional volume (which can spike to full volume).
             AudioSeq_SetVolumeScale(SEQ_PLAYER_BGM_SUB, VOL_SCALE_INDEX_BGM_SUB, 0, sSpatialSubBgmFadeTimer);
@@ -765,8 +833,9 @@ RECOMP_PATCH void Audio_UpdateSequenceAtPos(void) {
                 return;
             }
 
-            AudioApi_StartSubBgmAtPos(sSpatialSeqPlayerIndex, &sSpatialSeqFilterPos, sExtSpatialSeqSeqId, 0x20,
-                                      200.0f, sSpatialSeqMaxDist, 1.0f);
+            u8 spatialFlags = (sSpatialSeqPlayerIndex == SEQ_PLAYER_BGM_SUB) ? 0x26 : 0x20;
+            AudioApi_StartSubBgmAtPos(sSpatialSeqPlayerIndex, &sSpatialSeqFilterPos, sExtSpatialSeqSeqId,
+                                      spatialFlags, 200.0f, sSpatialSeqMaxDist, 1.0f);
             if (!sSpatialSeqIsActive[sSpatialSeqPlayerIndex]) {
                 sSpatialSeqFadeTimer = 0;
             }
@@ -815,6 +884,7 @@ RECOMP_EXPORT void AudioApi_StartSceneSequence(s32 seqId, u16 seqArgs) {
         }
     }
     sExtPrevSceneSeqId = seqId;
+    AudioApi_RestoreSfxAfterSceneStart(seqId);
 }
 
 RECOMP_PATCH void Audio_StartSceneSequence(u16 seqId) {
@@ -822,6 +892,8 @@ RECOMP_PATCH void Audio_StartSceneSequence(u16 seqId) {
 }
 
 RECOMP_EXPORT void AudioApi_StartMorningSceneSequence(s32 seqId, u16 seqArgs) {
+    AudioApi_DebugEvent(AUDIOAPI_DEBUG_EVENT_START_MORNING_SEQUENCE, seqId, seqArgs,
+                        AudioApi_IsSequenceRegistered(NB_BGM_MORNING), 0);
     if (seqId != NA_BGM_AMBIENCE) {
         SEQCMD_STOP_SEQUENCE(SEQ_PLAYER_AMBIENCE, 0);
 
@@ -857,6 +929,8 @@ RECOMP_PATCH void Audio_PlayMorningSceneSequence(u16 seqId, u8 dayMinusOne) {
 RECOMP_EXPORT void AudioApi_PlaySceneSequence(s32 seqId, u16 seqArgs, u8 dayMinusOne) {
     bool requestChanged;
 
+    AudioApi_DebugEvent(AUDIOAPI_DEBUG_EVENT_PLAY_SCENE_SEQUENCE, seqId, seqArgs,
+                        dayMinusOne, sExtRequestedSceneSeqId);
     requestChanged = (sExtRequestedSceneSeqId != seqId) || (sExtRequestedSceneSeqArgs != seqArgs);
 
     if (requestChanged || !gAudioCtx.seqPlayers[SEQ_PLAYER_BGM_MAIN].enabled) {
@@ -903,6 +977,7 @@ RECOMP_PATCH void Audio_UpdateSceneSequenceResumePoint(void) {
 
 RECOMP_EXPORT void AudioApi_PlaySequenceInCutscene(s32 seqId, u16 seqArgs) {
     u8 seqFlags = AudioApi_GetSequenceFlagsInternal(seqId);
+    AudioApi_DebugEvent(AUDIOAPI_DEBUG_EVENT_PLAY_CUTSCENE_SEQUENCE, seqId, seqArgs, seqFlags, 0);
 
     if (seqFlags & SEQ_FLAG_FANFARE) {
         Audio_PlayFanfare(seqId);
@@ -1076,6 +1151,8 @@ RECOMP_EXPORT void AudioApi_PlayFanfare(s32 seqId, u16 seqArgs) {
     u8* prevFontId = AudioThread_GetFontsForSequence(prevSeqId, &outNumFonts);
     u8* fontId = AudioThread_GetFontsForSequence(seqId, &outNumFonts);
 
+    AudioApi_DebugEvent(AUDIOAPI_DEBUG_EVENT_PLAY_FANFARE, seqId, seqArgs, prevSeqId, *fontId);
+
     if ((prevSeqId == NA_BGM_DISABLED) || (*prevFontId == *fontId)) {
         sFanfareState = 1;
     } else {
@@ -1150,7 +1227,8 @@ RECOMP_PATCH void Audio_UpdateFanfare(void) {
             if (sFanfareState == 0) {
                 AUDIOCMD_GLOBAL_POP_PERSISTENT_CACHE(SEQUENCE_TABLE);
                 AUDIOCMD_GLOBAL_POP_PERSISTENT_CACHE(FONT_TABLE);
-                if (AudioApi_GetActiveSeqId(SEQ_PLAYER_FANFARE) == NA_BGM_DISABLED) {
+                if ((AudioApi_GetActiveSeqId(SEQ_PLAYER_FANFARE) == NA_BGM_DISABLED) &&
+                    (sExtFanfareSeqId != AUDIOAPI_FANFARE_SEQ_NODUCK)) {
                     Audio_MuteBgmPlayersForFanfare();
                 }
                 SEQCMD_EXTENDED_PLAY_SEQUENCE(SEQ_PLAYER_FANFARE, 0, sExtFanfareSeqArgs, sExtFanfareSeqId);
@@ -1181,12 +1259,14 @@ RECOMP_PATCH void Audio_PlaySequenceWithSeqPlayerIO(s8 seqPlayerIndex, u16 seqId
 
 RECOMP_PATCH void Audio_SetSequenceMode(u8 seqMode) {
     u8 volumeFadeOutTimer;
+    bool subIsEnemy;
 
     s32 seqId = AudioApi_GetActiveSeqId(SEQ_PLAYER_BGM_MAIN);
     u8 seqFlags = AudioApi_GetSequenceFlagsInternal(seqId);
 
     s32 subSeqId = AudioApi_GetActiveSeqId(SEQ_PLAYER_BGM_SUB);
     u8 subSeqFlags = AudioApi_GetSequenceFlagsInternal(subSeqId);
+    subIsEnemy = (subSeqId == NA_BGM_ENEMY) && (AudioApi_GetActiveSeqArgs(SEQ_PLAYER_BGM_SUB) == 0x800);
 
     if (sExtPrevMainBgmSeqId == NA_BGM_DISABLED) {
         if (sAudioCutsceneFlag || sSpatialSeqIsActive[SEQ_PLAYER_BGM_SUB]) {
@@ -1207,7 +1287,9 @@ RECOMP_PATCH void Audio_SetSequenceMode(u8 seqMode) {
                     }
                 } else if ((sPrevSeqMode & 0x7F) == SEQ_MODE_ENEMY) {
                     // If only sPrevSeqMode = SEQ_MODE_ENEMY (End)
-                    SEQCMD_STOP_SEQUENCE(SEQ_PLAYER_BGM_SUB, 10);
+                    if (subIsEnemy) {
+                        SEQCMD_STOP_SEQUENCE(SEQ_PLAYER_BGM_SUB, 10);
+                    }
 
                     if (seqMode == SEQ_MODE_IGNORE) {
                         volumeFadeOutTimer = 0;
@@ -1466,6 +1548,11 @@ RECOMP_HOOK("AudioSeq_UpdateActiveSequences") void AudioApi_UpdateActiveSequence
         if ((sPendingSfxRestoreFrames == 0) && gAudioCtx.seqPlayers[SEQ_PLAYER_SFX].enabled &&
             (sAudioPauseState == AUDIO_PAUSE_STATE_CLOSED) && !sAudioCutsceneFlag) {
             Audio_SetSfxVolumeExceptSystemAndOcarinaBanks(0x7F);
+            AudioApi_DebugEvent(AUDIOAPI_DEBUG_EVENT_SET_SFX_VOL_EXCEPT,
+                                0x7F,
+                                sAllPlayersMutedExceptSystemAndOcarina,
+                                sMuteOnlySfxAndAmbienceSeq,
+                                (s32)(gSfxVolume * 1000.0f));
         }
     }
 }
@@ -1502,6 +1589,122 @@ RECOMP_HOOK_RETURN("AudioSeq_UpdateActiveSequences") void AudioApi_UpdateActiveS
         }
     }
 
+}
+
+RECOMP_HOOK("Audio_MuteAllSeqExceptSystemAndOcarina") void AudioApi_OnMuteAllSeqExceptSystemAndOcarina(u16 duration) {
+    AudioApi_DebugEvent(AUDIOAPI_DEBUG_EVENT_MUTE_ALL_EXCEPT_SYS_OCA,
+                        duration,
+                        sAllPlayersMutedExceptSystemAndOcarina,
+                        sMuteOnlySfxAndAmbienceSeq,
+                        sAudioPauseState);
+}
+
+RECOMP_HOOK("Audio_SetSfxVolumeExceptSystemAndOcarinaBanks")
+void AudioApi_OnSetSfxVolumeExceptSystemAndOcarinaBanks(u8 volume) {
+    AudioApi_DebugEvent(AUDIOAPI_DEBUG_EVENT_SET_SFX_VOL_EXCEPT,
+                        volume,
+                        sAllPlayersMutedExceptSystemAndOcarina,
+                        sMuteOnlySfxAndAmbienceSeq,
+                        (s32)(gSfxVolume * 1000.0f));
+}
+
+RECOMP_HOOK("Audio_UpdateSfxVolumeTransition") void AudioApi_OnUpdateSfxVolumeTransition(void) {
+    if (sPrevSfxVolumeDuration != sSfxVolumeDuration) {
+        sPrevSfxVolumeDuration = sSfxVolumeDuration;
+        AudioApi_DebugEvent(AUDIOAPI_DEBUG_EVENT_SFX_VOL_TRANSITION,
+                            sSfxVolumeDuration,
+                            (s32)(gSfxVolume * 1000.0f),
+                            (s32)(sSfxVolumeTarget * 1000.0f),
+                            (s32)(sSfxVolumeRate * 1000.0f));
+    }
+}
+
+RECOMP_HOOK("Audio_MuteSfxAndAmbienceSeqExceptSystemAndOcarina")
+void AudioApi_OnMuteSfxAndAmbienceSeqExceptSystemAndOcarina(u8 muteOnlySfxAndAmbienceSeq) {
+    AudioApi_DebugEvent(AUDIOAPI_DEBUG_EVENT_MUTE_SFX_AMBIENCE_ONLY,
+                        muteOnlySfxAndAmbienceSeq,
+                        sMuteOnlySfxAndAmbienceSeq,
+                        sAllPlayersMutedExceptSystemAndOcarina,
+                        sAudioPauseState);
+}
+
+RECOMP_HOOK("Audio_MuteSfxAndAmbienceSeqExceptSysAndOca")
+void AudioApi_OnMuteSfxAndAmbienceSeqExceptSysAndOca(u16 duration) {
+    AudioApi_DebugEvent(AUDIOAPI_DEBUG_EVENT_MUTE_SFX_AMBIENCE_SYS_OCA,
+                        duration,
+                        sMuteOnlySfxAndAmbienceSeq,
+                        sAllPlayersMutedExceptSystemAndOcarina,
+                        sAudioPauseState);
+}
+
+RECOMP_HOOK("Audio_SetSpec") void AudioApi_OnSetSpec(u8 specId) {
+    AudioApi_DebugEvent(AUDIOAPI_DEBUG_EVENT_SET_SPEC,
+                        specId,
+                        gAudioSpecId,
+                        sMuteOnlySfxAndAmbienceSeq,
+                        sAllPlayersMutedExceptSystemAndOcarina);
+    AudioApi_DebugEvent(AUDIOAPI_DEBUG_EVENT_SFX_BANK_MASK,
+                        AudioApi_GetSfxMutedMask(),
+                        gAudioCtx.seqPlayers[SEQ_PLAYER_SFX].enabled,
+                        gExtActiveSeqs[SEQ_PLAYER_SFX].seqId,
+                        specId);
+}
+
+RECOMP_HOOK("Audio_ResetForAudioHeapStep3") void AudioApi_OnResetForAudioHeapStep3_Log(void) {
+    sResetStep3HadMuteOnly = sMuteOnlySfxAndAmbienceSeq;
+    AudioApi_DebugEvent(AUDIOAPI_DEBUG_EVENT_RESET_HEAP_STEP3,
+                        sMuteOnlySfxAndAmbienceSeq,
+                        sAllPlayersMutedExceptSystemAndOcarina,
+                        gAudioCtx.seqPlayers[SEQ_PLAYER_SFX].enabled,
+                        gExtActiveSeqs[SEQ_PLAYER_SFX].seqId);
+    AudioApi_DebugEvent(AUDIOAPI_DEBUG_EVENT_SFX_BANK_MASK,
+                        AudioApi_GetSfxMutedMask(),
+                        gAudioCtx.seqPlayers[SEQ_PLAYER_SFX].enabled,
+                        gExtActiveSeqs[SEQ_PLAYER_SFX].seqId,
+                        sResetStep3HadMuteOnly);
+}
+
+RECOMP_HOOK_RETURN("Audio_ResetForAudioHeapStep3") void AudioApi_OnResetForAudioHeapStep3_Return(void) {
+    AudioApi_DebugEvent(AUDIOAPI_DEBUG_EVENT_SFX_BANK_MASK,
+                        AudioApi_GetSfxMutedMask(),
+                        gAudioCtx.seqPlayers[SEQ_PLAYER_SFX].enabled,
+                        gExtActiveSeqs[SEQ_PLAYER_SFX].seqId,
+                        sResetStep3HadMuteOnly);
+
+    if (sResetStep3HadMuteOnly && (sAudioPauseState == AUDIO_PAUSE_STATE_CLOSED) && !sAudioCutsceneFlag) {
+        AudioSfx_ResetSfxChannelState();
+        Audio_SetSfxVolumeExceptSystemAndOcarinaBanks(0x7F);
+        AudioApi_DebugEvent(AUDIOAPI_DEBUG_EVENT_SET_SFX_VOL_EXCEPT,
+                            0x7F,
+                            sAllPlayersMutedExceptSystemAndOcarina,
+                            sMuteOnlySfxAndAmbienceSeq,
+                            (s32)(gSfxVolume * 1000.0f));
+        sPendingSfxRestoreFrames = 3;
+    }
+}
+
+RECOMP_HOOK("AudioSfx_MuteBanks") void AudioApi_OnAudioSfxMuteBanks(u16 muteMask) {
+    AudioApi_DebugEvent(AUDIOAPI_DEBUG_EVENT_SFX_MUTE_BANKS_BEFORE,
+                        muteMask,
+                        AudioApi_GetSfxMutedMask(),
+                        sMuteOnlySfxAndAmbienceSeq,
+                        sAllPlayersMutedExceptSystemAndOcarina);
+}
+
+RECOMP_HOOK_RETURN("AudioSfx_MuteBanks") void AudioApi_OnAudioSfxMuteBanksReturn(void) {
+    AudioApi_DebugEvent(AUDIOAPI_DEBUG_EVENT_SFX_MUTE_BANKS_AFTER,
+                        AudioApi_GetSfxMutedMask(),
+                        sMuteOnlySfxAndAmbienceSeq,
+                        sAllPlayersMutedExceptSystemAndOcarina,
+                        gAudioCtx.seqPlayers[SEQ_PLAYER_SFX].enabled);
+}
+
+RECOMP_HOOK("Audio_StartSfxPlayer") void AudioApi_OnStartSfxPlayer(void) {
+    AudioApi_DebugEvent(AUDIOAPI_DEBUG_EVENT_START_SFX_PLAYER,
+                        gAudioCtx.seqPlayers[SEQ_PLAYER_SFX].enabled,
+                        gExtActiveSeqs[SEQ_PLAYER_SFX].seqId,
+                        sAllPlayersMutedExceptSystemAndOcarina,
+                        sMuteOnlySfxAndAmbienceSeq);
 }
 
 // ======== RECOMP-SPECIFIC OVERRIDES ========

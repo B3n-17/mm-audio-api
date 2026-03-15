@@ -13,6 +13,7 @@
 #include <audio_api/types.h>
 
 #include <extlib/lib_recomp.hpp>
+#include <extlib/debug.hpp>
 #include <extlib/resource/abstract.hpp>
 #include <extlib/resource/audiofile.hpp>
 #include <extlib/resource/generic.hpp>
@@ -87,6 +88,38 @@ RECOMP_DLL_FUNC(AudioApiNative_Ready) {
 
 RECOMP_DLL_FUNC(AudioApiNative_Tick) {
     workerThreadNotify();
+    RECOMP_RETURN(bool, true);
+}
+
+RECOMP_DLL_FUNC(AudioApiNative_DebugSetEnabled) {
+    auto enabled = RECOMP_ARG(uint32_t, 0);
+    Debug::setEnabled(enabled != 0);
+    RECOMP_RETURN(bool, true);
+}
+
+RECOMP_DLL_FUNC(AudioApiNative_DebugSetSnapshot) {
+    auto initPhase = RECOMP_ARG(uint32_t, 0);
+    auto mainSeqId = RECOMP_ARG(int32_t, 1);
+    auto subSeqId = RECOMP_ARG(int32_t, 2);
+    auto args = TO_PTR(int32_t, RECOMP_ARG(int32_t, 3));
+    Debug::setSnapshot(initPhase, mainSeqId, subSeqId, args[0], args[1]);
+    RECOMP_RETURN(bool, true);
+}
+
+RECOMP_DLL_FUNC(AudioApiNative_DebugSetSeqPlayer) {
+    auto playerIndex = RECOMP_ARG(uint32_t, 0);
+    auto seqId = RECOMP_ARG(int32_t, 1);
+    auto args = TO_PTR(int32_t, RECOMP_ARG(int32_t, 2));
+    Debug::setSeqPlayerPacked(playerIndex, seqId, args);
+    RECOMP_RETURN(bool, true);
+}
+
+RECOMP_DLL_FUNC(AudioApiNative_DebugEvent) {
+    auto tag = RECOMP_ARG(uint32_t, 0);
+    auto a = RECOMP_ARG(int32_t, 1);
+    auto b = RECOMP_ARG(int32_t, 2);
+    auto args = TO_PTR(int32_t, RECOMP_ARG(int32_t, 3));
+    Debug::pushEvent(tag, a, b, args[0], args[1]);
     RECOMP_RETURN(bool, true);
 }
 

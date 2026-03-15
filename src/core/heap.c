@@ -222,6 +222,23 @@ void AudioApi_RspCacheInvalidateLastEntry() {
     rspCache.entries[rspCache.pos].cacheAddr = NULL;
 }
 
+void AudioApi_RspCacheInvalidateAddr(void* addr, size_t size) {
+    uintptr_t start = (uintptr_t)addr;
+    uintptr_t end = start + size;
+
+    for (s32 i = 0; i < RSP_CACHE_CAPACITY; i++) {
+        RspCacheEntry* entry = &rspCache.entries[i];
+        if (entry->cacheAddr == NULL) {
+            continue;
+        }
+        uintptr_t entryStart = entry->addr;
+        uintptr_t entryEnd = entryStart + entry->size;
+        if (start < entryEnd && end > entryStart) {
+            entry->cacheAddr = NULL;
+        }
+    }
+}
+
 void AudioApi_InitHeap() {
     AudioHeap_InitPool(&loadBuffer.pool,
                        AudioHeap_AllocDmaMemory(&gAudioCtx.miscPool, LOAD_BUFFER_SIZE), LOAD_BUFFER_SIZE);
@@ -232,6 +249,9 @@ void AudioApi_InitHeap() {
     loadBuffer.pool.startAddr = (void*)ALIGN16((uintptr_t)loadBuffer.pool.startAddr);
     rspCache.pool.startAddr = (void*)ALIGN16((uintptr_t)rspCache.pool.startAddr);
     rspCache.pos = 0;
+    // Clear all entries so scene transitions don't leave stale source addresses that
+    // RspCacheSearch could match against a new scene's freshly loaded sample data.
+    Lib_MemSet(rspCache.entries, 0, sizeof(rspCache.entries));
 }
 
 RECOMP_PATCH void AudioHeap_Init(void) {
