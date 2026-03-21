@@ -3,111 +3,1191 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Audio API Debug</title>
+  <title>Audio API Control Room</title>
   <style>
     :root {
-      --bg0: #0f1a22;
-      --bg1: #152737;
-      --card: #10212fdd;
-      --line: #2a4b61;
-      --text: #dff1ff;
-      --muted: #9bbad0;
-      --accent: #55d6be;
-      --warn: #ffbe5c;
-      --bad: #ff6a6a;
-      --mono: "JetBrains Mono", "Cascadia Mono", "SFMono-Regular", Menlo, monospace;
-      --sans: "IBM Plex Sans", "Segoe UI", sans-serif;
+      --bg: #0a1016;
+      --bg-elev: #101926;
+      --bg-elev-2: #131f2f;
+      --panel: rgba(16, 25, 38, 0.92);
+      --panel-2: rgba(19, 31, 47, 0.92);
+      --line: #24364d;
+      --line-soft: #1a2a3d;
+      --text: #e8f1fb;
+      --muted: #9eb3c7;
+      --muted-2: #6d849c;
+      --good: #3dd9a0;
+      --warn: #ffbf69;
+      --bad: #ff7373;
+      --accent: #78b8ff;
+      --accent-2: #84f0da;
+      --chip: #0d1722;
+      --shadow: 0 10px 30px rgba(0, 0, 0, 0.28);
+      --radius: 18px;
+      --mono: "JetBrains Mono", "Cascadia Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+      --sans: Inter, "IBM Plex Sans", "Segoe UI", Arial, sans-serif;
     }
+
     * { box-sizing: border-box; }
+    html, body { height: 100%; }
     body {
       margin: 0;
       font-family: var(--sans);
       color: var(--text);
-      background: radial-gradient(1200px 500px at 10% 0%, #244660, transparent), linear-gradient(160deg, var(--bg0), var(--bg1));
+      background:
+        radial-gradient(1000px 500px at 0% -10%, rgba(80, 135, 210, 0.18), transparent 60%),
+        radial-gradient(900px 500px at 100% 0%, rgba(82, 214, 192, 0.12), transparent 55%),
+        linear-gradient(180deg, #091018 0%, #0a1016 100%);
       min-height: 100vh;
     }
-    .wrap { max-width: 1200px; margin: 0 auto; padding: 20px; }
-    h1 { margin: 0 0 12px; font-size: 24px; letter-spacing: 0.02em; }
-    .status {
+
+    .app {
+      max-width: 1680px;
+      margin: 0 auto;
+      padding: 20px;
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 18px;
+    }
+
+    .topbar {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 16px;
+      align-items: center;
+    }
+
+    .title-wrap h1 {
+      margin: 0;
+      font-size: 28px;
+      font-weight: 750;
+      letter-spacing: -0.02em;
+    }
+
+    .title-wrap p {
+      margin: 6px 0 0;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .toolbar {
+      display: flex;
+      align-items: center;
       gap: 10px;
-      margin-bottom: 14px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
     }
-    .card {
-      background: var(--card);
+
+    .chip, .btn, .input, .select {
       border: 1px solid var(--line);
-      border-radius: 10px;
-      padding: 10px 12px;
-      backdrop-filter: blur(3px);
+      background: var(--panel);
+      color: var(--text);
+      border-radius: 999px;
+      min-height: 38px;
+      padding: 0 14px;
+      font-size: 13px;
     }
-    .k { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.07em; }
-    .v { font-family: var(--mono); font-size: 18px; margin-top: 4px; }
-    .good { color: var(--accent); }
-    .warn { color: var(--warn); }
-    .bad { color: var(--bad); }
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      font-family: var(--mono);
+
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      white-space: nowrap;
+    }
+
+    .chip .dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: var(--muted-2);
+    }
+
+    .chip.good .dot { background: var(--good); }
+    .chip.warn .dot { background: var(--warn); }
+    .chip.bad .dot { background: var(--bad); }
+
+    .btn {
+      cursor: pointer;
+      font-weight: 600;
+    }
+
+    .input, .select {
+      border-radius: 12px;
+      padding: 0 12px;
+      outline: none;
+      min-width: 180px;
+    }
+
+    .panel {
+      background: linear-gradient(180deg, var(--panel), var(--panel-2));
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+      min-width: 0;
+    }
+
+    .panel-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      padding: 16px 18px 0;
+      flex-wrap: wrap;
+    }
+
+    .panel-title {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .panel-title h2,
+    .panel-title h3 {
+      margin: 0;
+      font-size: 15px;
+      font-weight: 700;
+      letter-spacing: 0.01em;
+    }
+
+    .panel-title p {
+      margin: 0;
+      color: var(--muted);
       font-size: 12px;
     }
-    th, td { padding: 7px 8px; border-bottom: 1px solid #1f3b50; text-align: left; }
-    th { color: var(--muted); font-weight: 600; }
-    .grid { display: grid; grid-template-columns: 1fr; gap: 12px; }
-    @media (min-width: 980px) { .grid { grid-template-columns: 1fr 1fr; } }
-    .events { max-height: 420px; overflow: auto; }
-    .pill { display: inline-block; border: 1px solid var(--line); border-radius: 999px; padding: 2px 8px; font-size: 11px; color: var(--muted); }
-    .chviz { min-width: 280px; display: grid; gap: 3px; }
-    .chrow { display: grid; grid-template-columns: 26px 1fr 52px; align-items: center; gap: 6px; }
-    .chid { color: var(--muted); font-size: 11px; }
-    .pantrack { position: relative; height: 8px; border-radius: 999px; background: #1b3548; border: 1px solid #2a4b61; }
-    .pancenter { position: absolute; left: 50%; top: -1px; bottom: -1px; width: 1px; background: #88a7bd; opacity: 0.8; }
-    .panpos { position: absolute; top: 0; bottom: 0; width: 2px; background: #7fe3d1; }
-    .voltxt { font-size: 11px; color: var(--text); text-align: right; }
-    .is-off .pantrack { opacity: 0.35; }
-    .is-off .voltxt { color: var(--muted); }
+
+    .panel-body {
+      padding: 16px 18px 18px;
+    }
+
+    .stat-grid {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .stat {
+      background: rgba(7, 14, 21, 0.34);
+      border: 1px solid var(--line-soft);
+      border-radius: 16px;
+      padding: 14px;
+      min-width: 0;
+    }
+
+    .stat .label {
+      color: var(--muted);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 8px;
+    }
+
+    .stat .value {
+      font-family: var(--mono);
+      font-size: 22px;
+      font-weight: 700;
+      line-height: 1.1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .stat .sub {
+      margin-top: 7px;
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .tabbar {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-bottom: 2px;
+    }
+
+    .tab-btn {
+      border: 1px solid var(--line);
+      background: var(--panel);
+      color: var(--muted);
+      border-radius: 12px;
+      min-height: 40px;
+      padding: 0 14px;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .tab-btn.active {
+      color: var(--text);
+      background: rgba(120, 184, 255, 0.08);
+      border-color: #33547a;
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.03);
+    }
+
+    .tab-panel { display: none; }
+    .tab-panel.active { display: grid; gap: 18px; }
+
+    .sequence-strip {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .seq-card {
+      border: 1px solid var(--line-soft);
+      border-radius: 16px;
+      background: rgba(8, 15, 23, 0.34);
+      padding: 14px;
+    }
+
+    .seq-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 12px;
+      margin-bottom: 10px;
+    }
+
+    .seq-name {
+      font-size: 12px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .seq-id {
+      font-family: var(--mono);
+      font-size: 26px;
+      font-weight: 700;
+    }
+
+    .seq-meta {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .seq-meta strong {
+      display: block;
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: 13px;
+      margin-top: 2px;
+    }
+
+    .players-toolbar,
+    .event-toolbar {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .toggle-group {
+      display: inline-flex;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      overflow: hidden;
+      background: rgba(255,255,255,0.02);
+    }
+
+    .toggle-btn {
+      border: 0;
+      background: transparent;
+      color: var(--muted);
+      min-height: 38px;
+      padding: 0 12px;
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .toggle-btn.active {
+      background: rgba(120, 184, 255, 0.12);
+      color: var(--text);
+    }
+
+    .players-toolbar,
+    .event-toolbar {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .players-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+      gap: 14px;
+    }
+
+    .player-card {
+      border: 1px solid var(--line-soft);
+      border-radius: 18px;
+      padding: 14px;
+      background: rgba(7, 14, 21, 0.34);
+      display: grid;
+      gap: 12px;
+    }
+
+    .player-head {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 12px;
+      align-items: start;
+    }
+
+    .player-title {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .player-index {
+      width: 36px;
+      height: 36px;
+      border-radius: 12px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      background: linear-gradient(180deg, rgba(120, 184, 255, 0.16), rgba(132, 240, 218, 0.08));
+      border: 1px solid var(--line);
+      font-family: var(--mono);
+      font-weight: 700;
+      flex: 0 0 auto;
+    }
+
+    .player-title-text h3 {
+      margin: 0;
+      font-size: 16px;
+    }
+
+    .player-title-text p {
+      margin: 4px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .badge-row {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .badge {
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: var(--chip);
+      font-size: 11px;
+      color: var(--muted);
+      padding: 5px 9px;
+      white-space: nowrap;
+    }
+
+    .badge strong {
+      color: var(--text);
+      font-family: var(--mono);
+      font-weight: 700;
+    }
+
+    .metric-grid,
+    .event-stats {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .event-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+
+    .metric {
+      border: 1px solid var(--line-soft);
+      border-radius: 14px;
+      padding: 10px;
+      background: rgba(0,0,0,0.1);
+    }
+
+    .metric .k {
+      color: var(--muted);
+      font-size: 11px;
+      margin-bottom: 4px;
+    }
+
+    .metric .v {
+      font-family: var(--mono);
+      font-size: 16px;
+      font-weight: 700;
+    }
+
+    .section-label {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 8px;
+    }
+
+    .channels {
+      display: grid;
+      gap: 8px;
+    }
+
+    .channel-row {
+      display: grid;
+      grid-template-columns: 48px 1fr 90px 90px;
+      align-items: center;
+      gap: 10px;
+      font-family: var(--mono);
+      border: 1px solid var(--line-soft);
+      border-radius: 12px;
+      padding: 8px 10px;
+      background: rgba(255,255,255,0.02);
+    }
+
+    .channel-row.off { opacity: 0.45; }
+
+    .channel-name {
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .panbar {
+      position: relative;
+      height: 12px;
+      border-radius: 999px;
+      background: linear-gradient(90deg, rgba(120, 184, 255, 0.12), rgba(255,255,255,0.04), rgba(132, 240, 218, 0.12));
+      border: 1px solid var(--line);
+      overflow: hidden;
+    }
+
+    .panbar::before {
+      content: "";
+      position: absolute;
+      top: -1px;
+      bottom: -1px;
+      left: 50%;
+      width: 1px;
+      background: rgba(255,255,255,0.25);
+      transform: translateX(-0.5px);
+    }
+
+    .pan-marker {
+      position: absolute;
+      top: -2px;
+      bottom: -2px;
+      width: 3px;
+      border-radius: 999px;
+      background: var(--accent-2);
+      box-shadow: 0 0 12px rgba(132, 240, 218, 0.35);
+      transform: translateX(-50%);
+    }
+
+    .mono-small {
+      font-family: var(--mono);
+      font-size: 12px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .layers-table {
+      display: grid;
+      gap: 6px;
+    }
+
+    .layer-head,
+    .layer-row {
+      display: grid;
+      grid-template-columns: 48px repeat(4, minmax(0, 1fr));
+      gap: 6px;
+      align-items: center;
+    }
+
+    .layer-head {
+      color: var(--muted);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    .layer-row .cell {
+      border: 1px solid var(--line-soft);
+      border-radius: 10px;
+      padding: 7px 8px;
+      background: rgba(255,255,255,0.02);
+      font-family: var(--mono);
+      font-size: 11px;
+      min-height: 34px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      word-break: break-word;
+    }
+
+    .layer-row .cell.empty { color: var(--muted-2); }
+
+    .event-list {
+      display: grid;
+      gap: 8px;
+    }
+
+    .event-table {
+      border: 1px solid var(--line-soft);
+      border-radius: 14px;
+      overflow: hidden;
+      background: rgba(7, 14, 21, 0.34);
+    }
+
+    .event-table-head,
+    .event-row {
+      display: grid;
+      grid-template-columns: 90px 170px minmax(260px, 1fr) 90px 90px 90px 90px;
+      align-items: center;
+      font-family: var(--mono);
+      font-size: 13px;
+    }
+
+    .event-table-head {
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      background: #122133;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      font-size: 11px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .event-row {
+      border-bottom: 1px solid var(--line-soft);
+      background: rgba(255,255,255,0.01);
+    }
+
+    .event-row:nth-child(even) {
+      background: rgba(255,255,255,0.025);
+    }
+
+    .event-row:hover {
+      background: rgba(120, 184, 255, 0.06);
+    }
+
+    .event-table-head > div,
+    .event-row > div {
+      padding: 10px 12px;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .event-id-cell {
+      color: var(--accent-2);
+      font-weight: 700;
+    }
+
+    .event-tag-cell {
+      font-weight: 700;
+      color: var(--text);
+    }
+
+    .event-num {
+      text-align: right;
+      color: var(--text);
+    }
+
+    .event-ts-cell {
+      color: var(--muted);
+    }
+
+    .summary-table {
+      display: grid;
+      gap: 8px;
+    }
+
+    .summary-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 72px 72px;
+      gap: 10px;
+      align-items: center;
+      padding: 10px 12px;
+      border: 1px solid var(--line-soft);
+      border-radius: 12px;
+      background: rgba(255,255,255,0.02);
+      font-size: 13px;
+    }
+
+    .summary-name {
+      min-width: 0;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .summary-name span:last-child {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .summary-count,
+    .summary-share {
+      font-family: var(--mono);
+      text-align: right;
+      color: var(--text);
+    }
+
+    .empty-state {
+      border: 1px dashed var(--line);
+      border-radius: 14px;
+      padding: 18px;
+      color: var(--muted);
+      text-align: center;
+      background: rgba(255,255,255,0.015);
+      font-size: 13px;
+    }
+
+    .footer-note {
+      color: var(--muted-2);
+      font-size: 12px;
+      padding: 0 2px;
+    }
+
+    @media (max-width: 1180px) {
+      .stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .sequence-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .players-grid { grid-template-columns: 1fr; }
+      .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .event-table-head,
+      .event-row { grid-template-columns: 90px 150px minmax(220px, 1fr) 80px 80px 80px 80px; }
+    }
+
+    @media (max-width: 860px) {
+      .topbar { grid-template-columns: 1fr; }
+      .toolbar { justify-content: flex-start; }
+      .channel-row { grid-template-columns: 48px 1fr 90px; }
+      .channel-row > :last-child { display: none; }
+      .layer-head, .layer-row { grid-template-columns: 42px repeat(4, minmax(0, 1fr)); }
+      .event-table { overflow-x: auto; }
+      .event-table-head,
+      .event-row { min-width: 860px; }
+    }
+
+    @media (max-width: 640px) {
+      .app { padding: 14px; }
+      .stat-grid, .event-stats, .metric-grid, .sequence-strip, .event-body-grid { grid-template-columns: 1fr; }
+      .summary-row { grid-template-columns: minmax(0, 1fr) 64px 64px; }
+      .input, .select { min-width: 140px; }
+    }
+
+    /* ── Majora's DJ ────────────────────────────────────────────────── */
+    .dj-note {
+      border: 1px solid rgba(255, 191, 105, 0.25);
+      background: rgba(255, 191, 105, 0.05);
+      border-radius: 12px;
+      padding: 10px 16px;
+      font-size: 12px;
+      color: var(--warn);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .dj-section {
+      display: grid;
+      gap: 14px;
+    }
+
+    .dj-player-label {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 2px;
+    }
+
+    .dj-player-label h3 {
+      margin: 0;
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+      text-transform: uppercase;
+    }
+
+    .dj-player-label .badge {
+      font-size: 11px;
+    }
+
+    .mixer-board {
+      display: flex;
+      gap: 0;
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: rgba(4, 9, 14, 0.55);
+      padding: 0;
+      min-height: 360px;
+    }
+
+    .mixer-strip {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      min-width: 72px;
+      max-width: 88px;
+      flex: 1 1 72px;
+      padding: 16px 8px 12px;
+      border-right: 1px solid var(--line-soft);
+      gap: 10px;
+      position: relative;
+      transition: background 0.15s;
+    }
+
+    .mixer-strip:last-child {
+      border-right: none;
+    }
+
+    .mixer-strip:hover {
+      background: rgba(120, 184, 255, 0.04);
+    }
+
+    .mixer-strip.muted {
+      opacity: 0.45;
+    }
+
+    .mixer-strip.inactive {
+      opacity: 0.3;
+    }
+
+    .strip-ch-label {
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--muted-2);
+      letter-spacing: 0.04em;
+    }
+
+    .strip-ch-label.active {
+      color: var(--accent-2);
+    }
+
+    /* Knob (pan) */
+    .knob-wrap {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .knob {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      background: radial-gradient(circle at 35% 35%, #2a3d52, #0d1722);
+      border: 2px solid var(--line);
+      position: relative;
+      cursor: ew-resize;
+      user-select: none;
+      flex-shrink: 0;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.06);
+      transition: border-color 0.15s;
+    }
+
+    .knob:hover {
+      border-color: var(--accent);
+    }
+
+    .knob-dot {
+      position: absolute;
+      width: 3px;
+      height: 10px;
+      background: var(--accent-2);
+      border-radius: 2px;
+      left: 50%;
+      top: 5px;
+      transform-origin: bottom center;
+      transform: translateX(-50%);
+      box-shadow: 0 0 6px rgba(132, 240, 218, 0.5);
+    }
+
+    .knob-label {
+      font-family: var(--mono);
+      font-size: 10px;
+      color: var(--muted);
+      text-align: center;
+    }
+
+    .knob-name {
+      font-size: 10px;
+      color: var(--muted-2);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    /* Fader (volume) */
+    .fader-wrap {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+      min-height: 140px;
+    }
+
+    .fader-track {
+      flex: 1;
+      width: 4px;
+      background: rgba(255,255,255,0.06);
+      border-radius: 2px;
+      position: relative;
+      cursor: ns-resize;
+      user-select: none;
+      min-height: 100px;
+    }
+
+    .fader-track:hover .fader-thumb {
+      border-color: var(--accent);
+      box-shadow: 0 0 10px rgba(120, 184, 255, 0.35);
+    }
+
+    .fader-fill {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      border-radius: 2px;
+      background: linear-gradient(0deg, rgba(132, 240, 218, 0.5), rgba(120, 184, 255, 0.3));
+      pointer-events: none;
+    }
+
+    .fader-unity {
+      position: absolute;
+      left: -4px;
+      right: -4px;
+      bottom: 100%;
+      height: 1px;
+      background: rgba(255, 191, 105, 0.4);
+      pointer-events: none;
+    }
+
+    .fader-unity::before {
+      content: "U";
+      position: absolute;
+      right: calc(100% + 2px);
+      top: -5px;
+      font-size: 8px;
+      font-family: var(--mono);
+      color: rgba(255, 191, 105, 0.5);
+      line-height: 1;
+    }
+
+    .fader-thumb {
+      position: absolute;
+      left: 50%;
+      width: 28px;
+      height: 10px;
+      background: linear-gradient(180deg, #2d4766, #1a2e44);
+      border: 1px solid #3a5a80;
+      border-radius: 3px;
+      transform: translate(-50%, 50%);
+      cursor: ns-resize;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.5);
+      transition: border-color 0.1s;
+    }
+
+    .fader-thumb::after {
+      content: "";
+      position: absolute;
+      left: 3px;
+      right: 3px;
+      top: 50%;
+      height: 1px;
+      background: rgba(255,255,255,0.25);
+      transform: translateY(-50%);
+    }
+
+    .fader-vol-label {
+      font-family: var(--mono);
+      font-size: 10px;
+      color: var(--muted);
+      text-align: center;
+      min-height: 14px;
+    }
+
+    .fader-name {
+      font-size: 10px;
+      color: var(--muted-2);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    /* Mute / Solo buttons */
+    .strip-btns {
+      display: flex;
+      gap: 4px;
+      width: 100%;
+    }
+
+    .strip-mute,
+    .strip-solo {
+      background: rgba(255,255,255,0.04);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 700;
+      padding: 4px 0;
+      flex: 1;
+      cursor: pointer;
+      letter-spacing: 0.04em;
+      transition: background 0.1s, color 0.1s, border-color 0.1s;
+    }
+
+    .strip-mute:hover {
+      background: rgba(255, 115, 115, 0.1);
+      border-color: rgba(255, 115, 115, 0.4);
+      color: var(--bad);
+    }
+
+    .strip-mute.muted {
+      background: rgba(255, 115, 115, 0.15);
+      border-color: rgba(255, 115, 115, 0.5);
+      color: var(--bad);
+    }
+
+    .strip-solo:hover {
+      background: rgba(255, 191, 105, 0.1);
+      border-color: rgba(255, 191, 105, 0.4);
+      color: var(--warn);
+    }
+
+    .strip-solo.soloed {
+      background: rgba(255, 191, 105, 0.18);
+      border-color: rgba(255, 191, 105, 0.6);
+      color: var(--warn);
+    }
+
+    .mixer-strip.solo-dimmed {
+      opacity: 0.25;
+    }
+
+    .knob.reverb-knob .knob-dot {
+      background: var(--accent);
+      box-shadow: 0 0 6px rgba(120, 184, 255, 0.5);
+    }
+
+    .knob.reverb-knob {
+      background: radial-gradient(circle at 35% 35%, #1e3050, #0a1520);
+    }
+
+    .dj-empty {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex: 1;
+      color: var(--muted-2);
+      font-size: 13px;
+      padding: 24px;
+    }
   </style>
 </head>
 <body>
-  <div class="wrap">
-    <h1>Audio API Live Debug</h1>
-    <div class="status">
-      <div class="card"><div class="k">Connection</div><div id="conn" class="v">connecting...</div></div>
-      <div class="card"><div class="k">Init Phase</div><div id="phase" class="v">-</div></div>
-      <div class="card"><div class="k">Last Event ID</div><div id="lastId" class="v">0</div></div>
-      <div class="card"><div class="k">Dropped Events</div><div id="dropped" class="v">0</div></div>
-      <div class="card"><div class="k">Main/Sub/Fanfare</div><div id="quickSeq" class="v">-</div></div>
-    </div>
-
-    <div class="grid">
-      <div class="card">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-          <span class="pill">/snapshot</span>
-          <span id="snapTs" class="k">ts: -</span>
-        </div>
-        <table>
-          <thead><tr><th>Player</th><th>Role</th><th>SeqId</th><th>En</th><th>Ch</th><th>Pan L/C/R(avg)</th><th>Notes A/D/R</th><th>Ch0..3 pan@vol</th><th>L0..3 pan/notePan</th><th>L0..3 tgtLR/curLR</th><th>Seq IO</th></tr></thead>
-          <tbody id="players"></tbody>
-        </table>
+  <div class="app">
+    <div class="topbar">
+      <div class="title-wrap">
+        <h1>Audio API Control Room</h1>
+        <p>Live operational view with sequence state, player health, pan distribution, and event activity. Data source: <code style="font-family:var(--mono); color:var(--accent-2);">http://127.0.0.1:18480</code></p>
       </div>
-
-      <div class="card">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-          <span class="pill">/events</span>
-          <span class="k">latest first</span>
-        </div>
-        <div class="events">
-          <table>
-            <thead><tr><th>ID</th><th>Tag</th><th>a</th><th>b</th><th>c</th><th>d</th><th>ts(ms)</th></tr></thead>
-            <tbody id="events"></tbody>
-          </table>
-        </div>
+      <div class="toolbar">
+        <div id="connChip" class="chip bad"><span class="dot"></span><span id="connText">offline</span></div>
+        <div class="chip"><span>Phase</span><strong id="phaseText">-</strong></div>
+        <div class="chip"><span>48kHz Mode</span><strong id="khzModeText">-</strong></div>
+        <div class="chip"><span>Snapshot</span><strong id="snapshotTs">-</strong></div>
+        <button id="pauseBtn" class="btn" type="button">Pause</button>
+        <button id="clearBtn" class="btn" type="button">Clear events</button>
       </div>
     </div>
+
+    <section class="panel">
+      <div class="panel-body">
+        <div class="stat-grid">
+          <div class="stat">
+            <div class="label">Last Event ID</div>
+            <div id="statLastId" class="value">0</div>
+            <div class="sub">Newest event processed</div>
+          </div>
+          <div class="stat">
+            <div class="label">Dropped Events</div>
+            <div id="statDropped" class="value">0</div>
+            <div class="sub">Transport or poll loss</div>
+          </div>
+          <div class="stat">
+            <div class="label">Players Enabled</div>
+            <div id="statEnabledPlayers" class="value">0 / 0</div>
+            <div class="sub">Enabled vs total players</div>
+          </div>
+          <div class="stat">
+            <div class="label">Active Notes</div>
+            <div id="statNotes" class="value">0</div>
+            <div class="sub" id="statNotesSub">0 active · 0 decaying · 0 releasing</div>
+          </div>
+          <div class="stat">
+            <div class="label">Active Channels</div>
+            <div id="statChannels" class="value">0</div>
+            <div class="sub">Across all players</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <div class="tabbar">
+      <button id="tabOverviewBtn" class="tab-btn active" type="button">Overview</button>
+      <button id="tabEventsBtn" class="tab-btn" type="button">Events</button>
+      <button id="tabDjBtn" class="tab-btn" type="button">Majora's DJ</button>
+    </div>
+
+    <div id="overviewTab" class="tab-panel active">
+      <section class="panel">
+        <div class="panel-head">
+          <div class="panel-title">
+            <h2>Sequence overview</h2>
+            <p>Main playback state and aggregate counts.</p>
+          </div>
+          <div class="chip"><span>API</span><strong>127.0.0.1:18480/snapshot</strong></div>
+        </div>
+        <div class="panel-body">
+          <div id="sequenceStrip" class="sequence-strip"></div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <div class="panel-title">
+            <h2>Players</h2>
+            <p>Card view for each player with health, channels, panning, layers, and IO state.</p>
+          </div>
+          <div class="players-toolbar">
+            <input id="playerSearch" class="input" type="text" placeholder="Filter by role, seq, player" />
+            <select id="playerSort" class="select">
+              <option value="player">Sort: player</option>
+              <option value="seq">Sort: seq id</option>
+              <option value="notes">Sort: active notes</option>
+              <option value="channels">Sort: active channels</option>
+              <option value="pan">Sort: pan average</option>
+            </select>
+            <div class="toggle-group">
+              <button id="showActiveChannelsBtn" class="toggle-btn active" type="button">Active channels</button>
+              <button id="showAllChannelsBtn" class="toggle-btn" type="button">All channels</button>
+            </div>
+          </div>
+        </div>
+        <div class="panel-body">
+          <div id="playersGrid" class="players-grid"></div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <div class="panel-title">
+            <h2>Streamed audio</h2>
+            <p>Per-track DMA position, loop bounds, and progress bar. Updated on every DMA callback.</p>
+          </div>
+          <div class="chip"><span>API</span><strong>127.0.0.1:18480/streams</strong></div>
+        </div>
+        <div class="panel-body">
+          <div id="streamsPanel"></div>
+        </div>
+      </section>
+    </div>
+
+    <div id="eventsTab" class="tab-panel">
+      <section class="panel">
+        <div class="panel-head">
+          <div class="panel-title">
+            <h3>Event activity</h3>
+            <p>Incoming events with filter and readable argument layout.</p>
+          </div>
+          <div class="chip"><span>API</span><strong>127.0.0.1:18480/events</strong></div>
+        </div>
+        <div class="panel-body">
+          <div class="event-stats">
+            <div class="metric">
+              <div class="k">Stored</div>
+              <div id="eventStored" class="v">0</div>
+            </div>
+            <div class="metric">
+              <div class="k">Visible</div>
+              <div id="eventVisible" class="v">0</div>
+            </div>
+            <div class="metric">
+              <div class="k">Newest ts</div>
+              <div id="eventNewestTs" class="v">-</div>
+            </div>
+          </div>
+          <div class="event-toolbar">
+            <input id="eventSearch" class="input" type="text" placeholder="Filter event name or args" style="flex:1 1 260px;" />
+            <select id="eventLimit" class="select">
+              <option value="50">Show 50</option>
+              <option value="100" selected>Show 100</option>
+              <option value="200">Show 200</option>
+              <option value="400">Show 400</option>
+            </select>
+          </div>
+          <div id="eventList" class="event-list"></div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <div class="panel-title">
+            <h3>Event mix</h3>
+            <p>Most frequent recent event types in memory.</p>
+          </div>
+        </div>
+        <div class="panel-body">
+          <div id="eventSummary" class="summary-table"></div>
+        </div>
+      </section>
+    </div>
+
+    <div id="djTab" class="tab-panel">
+      <section class="panel">
+        <div class="panel-head">
+          <div class="panel-title">
+            <h2>Majora's DJ</h2>
+            <p>Live per-channel volume and pan mixer. Overrides are sent to the game immediately via POST /mix.</p>
+          </div>
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+            <div class="toggle-group">
+              <button id="djShowAllPlayersBtn" class="toggle-btn" type="button">All players</button>
+              <button id="djShowActivePlayersBtn" class="toggle-btn active" type="button">Active only</button>
+            </div>
+            <button id="djResetAllBtn" class="btn" type="button">Reset all</button>
+          </div>
+        </div>
+        <div class="panel-body">
+          <div id="djContent" class="dj-section">
+            <div class="empty-state">Waiting for game connection…</div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <div class="footer-note">Polling every 300 ms. UI keeps recent events in memory and derives aggregate counters client-side.</div>
   </div>
 
   <script>
+    const API_BASE = 'http://127.0.0.1:18480';
+
+    // Tags 1-4095 are reserved for internal audio API events.
+    // Downstream mods register custom tag names (>= 0x1000) via AudioApi_DebugRegisterTag;
+    // the UI fetches /tags on connect and merges them here so they display as readable names.
     const tags = {
       1: 'QUEUE_EXT_CMD',
       2: 'PROCESS_SEQ_CMD',
@@ -134,105 +1214,1116 @@
       23: 'SFX_BANK_MASK',
     };
 
-    let since = 0;
-    const eventRows = [];
+    const state = {
+      since: 0,
+      events: [],
+      snapshot: null,
+      paused: false,
+      timer: null,
+      channelDisplayMode: 'active',
+      tagsLoaded: false,
+      activeTab: 'overview',
+    };
 
-    async function j(url) {
+    // ── DJ Mixer state ──────────────────────────────────────────────────────
+    const dj = {
+      overrides: {},        // [player][channel] -> { pan, volMilli, muted, soloed }
+      baseline: {},         // [player][channel] -> { pan, volMilli } from last snapshot
+      showAllPlayers: false,
+    };
+
+    function djKey(player, channel) {
+      return player + '_' + channel;
+    }
+
+    function djGetOverride(player, channel) {
+      return (dj.overrides[player] || {})[channel] || { pan: null, volMilli: null, reverb: null, muted: false, soloed: false };
+    }
+
+    // Returns true if any channel on this player is soloed
+    function djHasSolo(player) {
+      const ovs = dj.overrides[player] || {};
+      return Object.values(ovs).some(o => o.soloed);
+    }
+
+    // Recompute which strips are dimmed due to solo state on a player, then sync to game
+    function djApplySolo(player, channels) {
+      const hasSolo = djHasSolo(player);
+      for (let ci = 0; ci < channels; ci++) {
+        const ov = djGetOverride(player, ci);
+        const stripEl = document.getElementById('dj-strip-' + player + '-' + ci);
+        if (stripEl) {
+          const dimmed = hasSolo && !ov.soloed;
+          stripEl.classList.toggle('solo-dimmed', dimmed);
+        }
+        // POST effective mute: muted explicitly, OR dimmed by solo
+        const hasSoloLocal = djHasSolo(player);
+        const effectiveMuted = ov.muted || (hasSoloLocal && !ov.soloed);
+        fetch(API_BASE + '/mix', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            player,
+            channel: ci,
+            pan:       ov.pan      !== null ? ov.pan      : -1,
+            vol_milli: ov.volMilli !== null ? ov.volMilli : -1,
+            reverb:    ov.reverb   !== null ? ov.reverb   : -1,
+            muted:     effectiveMuted ? 1 : 0,
+            clear:     0,
+          }),
+        }).catch(() => {});
+      }
+    }
+
+    function djSetOverride(player, channel, fields) {
+      if (!dj.overrides[player]) dj.overrides[player] = {};
+      const prev = djGetOverride(player, channel);
+      dj.overrides[player][channel] = Object.assign({}, prev, fields);
+      const ov = dj.overrides[player][channel];
+      const effectiveMuted = ov.muted || (djHasSolo(player) && !ov.soloed);
+      // POST to game
+      fetch(API_BASE + '/mix', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          player,
+          channel,
+          pan:       ov.pan      !== null ? ov.pan      : -1,
+          vol_milli: ov.volMilli !== null ? ov.volMilli : -1,
+          reverb:    ov.reverb   !== null ? ov.reverb   : -1,
+          muted:     effectiveMuted ? 1 : 0,
+          clear:     0,
+        }),
+      }).catch(() => {});
+    }
+
+    function djClearOverride(player, channel) {
+      if (dj.overrides[player]) delete dj.overrides[player][channel];
+      fetch(API_BASE + '/mix', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ player, channel, clear: 1 }),
+      }).catch(() => {});
+    }
+
+    function djClearAll() {
+      const seen = new Set();
+      for (const p of Object.keys(dj.overrides)) {
+        for (const c of Object.keys(dj.overrides[p])) {
+          seen.add(p + ',' + c);
+        }
+      }
+      dj.overrides = {};
+      for (const key of seen) {
+        const [p, c] = key.split(',').map(Number);
+        fetch(API_BASE + '/mix', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ player: p, channel: c, clear: 1 }),
+        }).catch(() => {});
+      }
+    }
+
+    // ── Knob drag logic ──────────────────────────────────────────────────────
+    function setupKnob(knobEl, onChange, defaultVal = 64) {
+      // pan knob: drag left/right to sweep 0–127
+      let dragging = false;
+      let startX = 0;
+      let startVal = 64;
+
+      function clamp(v) { return Math.max(0, Math.min(127, Math.round(v))); }
+
+      function onMove(e) {
+        if (!dragging) return;
+        const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+        const delta = clientX - startX;
+        onChange(clamp(startVal + delta));
+      }
+
+      function onUp() {
+        dragging = false;
+        window.removeEventListener('mousemove', onMove);
+        window.removeEventListener('mouseup', onUp);
+        window.removeEventListener('touchmove', onMove);
+        window.removeEventListener('touchend', onUp);
+      }
+
+      knobEl.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        dragging = true;
+        startX = e.clientX;
+        startVal = Number(knobEl.dataset.value) || 64;
+        window.addEventListener('mousemove', onMove);
+        window.addEventListener('mouseup', onUp);
+      });
+
+      knobEl.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        dragging = true;
+        startX = e.touches[0].clientX;
+        startVal = Number(knobEl.dataset.value) || 64;
+        window.addEventListener('touchmove', onMove, { passive: false });
+        window.addEventListener('touchend', onUp);
+      });
+
+      // Double-click to reset to default
+      knobEl.addEventListener('dblclick', () => {
+        onChange(defaultVal);
+      });
+    }
+
+    // ── Fader drag logic ──────────────────────────────────────────────────────
+    function setupFader(trackEl, onChange) {
+      // volume fader: drag up/down within the track
+      let dragging = false;
+      let trackRect = null;
+
+      function volFromY(clientY) {
+        const rect = trackRect || trackEl.getBoundingClientRect();
+        const rel = 1.0 - Math.max(0, Math.min(1, (clientY - rect.top) / rect.height));
+        return Math.round(rel * 1000);
+      }
+
+      function onMove(e) {
+        if (!dragging) return;
+        const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+        onChange(volFromY(clientY));
+      }
+
+      function onUp() {
+        dragging = false;
+        window.removeEventListener('mousemove', onMove);
+        window.removeEventListener('mouseup', onUp);
+        window.removeEventListener('touchmove', onMove);
+        window.removeEventListener('touchend', onUp);
+      }
+
+      trackEl.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        dragging = true;
+        trackRect = trackEl.getBoundingClientRect();
+        onChange(volFromY(e.clientY));
+        window.addEventListener('mousemove', onMove);
+        window.addEventListener('mouseup', onUp);
+      });
+
+      trackEl.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        dragging = true;
+        trackRect = trackEl.getBoundingClientRect();
+        onChange(volFromY(e.touches[0].clientY));
+        window.addEventListener('touchmove', onMove, { passive: false });
+        window.addEventListener('touchend', onUp);
+      });
+
+      // Double-click to reset to unity (1000 = 100%)
+      trackEl.addEventListener('dblclick', () => { onChange(1000); });
+    }
+
+    // ── Build/update DJ mixer DOM ────────────────────────────────────────────
+    // We build the mixer once per player layout change, then update values in-place.
+    let djBuiltLayout = '';   // JSON key of current [player_index, channel_count] layout
+
+    function djPanToRotation(pan) {
+      // 0 → -135°, 64 → 0°, 127 → +135°
+      return ((pan - 64) / 64) * 135;
+    }
+
+    function djReverbToRotation(rev) {
+      // 0 → -135°, 127 → +135°
+      return (rev / 127) * 270 - 135;
+    }
+
+    function djVolToPercent(volMilli) {
+      return Math.max(0, Math.min(100, volMilli / 10));
+    }
+
+    function djChannelTotal(player) {
+      return Math.max(
+        Array.isArray(player.ch_pan) ? player.ch_pan.length : 0,
+        Array.isArray(player.ch_vol_milli) ? player.ch_vol_milli.length : 0,
+        Array.isArray(player.ch_enabled) ? player.ch_enabled.length : 0,
+        4
+      );
+    }
+
+    function updateDjValues(players) {
+      for (const player of players) {
+        const chPan    = Array.isArray(player.ch_pan)        ? player.ch_pan        : [];
+        const chVol    = Array.isArray(player.ch_vol_milli)  ? player.ch_vol_milli  : [];
+        const chEn     = Array.isArray(player.ch_enabled)    ? player.ch_enabled    : [];
+        const chReverb = Array.isArray(player.ch_reverb_vol) ? player.ch_reverb_vol : [];
+        const pi = player.player;
+        const total = djChannelTotal(player);
+        const hasSolo = djHasSolo(pi);
+
+        for (let ci = 0; ci < total; ci++) {
+          const rawPan    = Number.isFinite(chPan[ci])    ? chPan[ci]    : 64;
+          const rawVol    = Number.isFinite(chVol[ci])    ? chVol[ci]    : 1000;
+          const rawReverb = Number.isFinite(chReverb[ci]) ? chReverb[ci] : 0;
+          if (!dj.baseline[pi]) dj.baseline[pi] = {};
+          dj.baseline[pi][ci] = { pan: rawPan, volMilli: rawVol, reverb: rawReverb };
+
+          const ov = djGetOverride(pi, ci);
+          const displayPan    = ov.pan    !== null ? ov.pan    : rawPan;
+          const displayVol    = ov.muted ? 0 : (ov.volMilli !== null ? ov.volMilli : rawVol);
+          const displayReverb = ov.reverb !== null ? ov.reverb : rawReverb;
+          const active = !!chEn[ci];
+          const dimmed = hasSolo && !ov.soloed;
+
+          const stripEl = document.getElementById('dj-strip-' + pi + '-' + ci);
+          if (!stripEl) continue;
+
+          const panKnob = stripEl.querySelector('.knob:not(.reverb-knob)');
+          if (panKnob) {
+            panKnob.dataset.value = displayPan;
+            const dot = panKnob.querySelector('.knob-dot');
+            if (dot) dot.style.transform = 'translateX(-50%) rotate(' + djPanToRotation(displayPan) + 'deg)';
+            const knobLbl = panKnob.closest('.knob-wrap').querySelector('.knob-label');
+            if (knobLbl) knobLbl.textContent = displayPan < 64 ? 'L' + (64 - displayPan) : displayPan > 64 ? 'R' + (displayPan - 64) : 'C';
+          }
+
+          const reverbKnob = stripEl.querySelector('.reverb-knob');
+          if (reverbKnob) {
+            reverbKnob.dataset.value = displayReverb;
+            const dot = reverbKnob.querySelector('.knob-dot');
+            if (dot) dot.style.transform = 'translateX(-50%) rotate(' + djReverbToRotation(displayReverb) + 'deg)';
+            const knobLbl = reverbKnob.closest('.knob-wrap').querySelector('.knob-label');
+            if (knobLbl) knobLbl.textContent = Math.round(displayReverb / 127 * 100) + '%';
+          }
+
+          const faderTrack = stripEl.querySelector('.fader-track');
+          if (faderTrack) {
+            faderTrack.dataset.value = displayVol;
+            const fill = faderTrack.querySelector('.fader-fill');
+            const thumb = faderTrack.querySelector('.fader-thumb');
+            const pct = djVolToPercent(displayVol);
+            if (fill) fill.style.height = pct + '%';
+            if (thumb) thumb.style.bottom = pct + '%';
+            const volLbl = stripEl.querySelector('.fader-vol-label');
+            if (volLbl) volLbl.textContent = (displayVol / 10).toFixed(0) + '%';
+          }
+
+          const muteBtn = stripEl.querySelector('.strip-mute');
+          if (muteBtn) {
+            muteBtn.classList.toggle('muted', ov.muted);
+            muteBtn.textContent = ov.muted ? 'MUTED' : 'M';
+          }
+          const soloBtn = stripEl.querySelector('.strip-solo');
+          if (soloBtn) {
+            soloBtn.classList.toggle('soloed', !!ov.soloed);
+            soloBtn.textContent = ov.soloed ? 'SOLO' : 'S';
+          }
+          stripEl.classList.toggle('muted', ov.muted);
+          stripEl.classList.toggle('solo-dimmed', dimmed);
+          stripEl.classList.toggle('inactive', !active && !ov.pan && !ov.volMilli && !ov.reverb && !ov.soloed);
+        }
+      }
+    }
+
+    function buildDjMixer(players) {
+      const djContent = document.getElementById('djContent');
+      if (!djContent) return;
+
+      const displayedPlayers = dj.showAllPlayers ? players : players.filter(p => p.enabled);
+      if (!displayedPlayers.length) {
+        const msg = players.length
+          ? '<div class="empty-state">No active players. Start a sequence in-game, or switch to "All players".</div>'
+          : '<div class="empty-state">Waiting for game connection…</div>';
+        djContent.innerHTML = msg;
+        djBuiltLayout = '';
+        return;
+      }
+
+      // Layout key includes showAllPlayers + enabled state so toggling forces a rebuild
+      const layoutKey = JSON.stringify({
+        showAll: dj.showAllPlayers,
+        players: displayedPlayers.map(p => ({
+          pi: p.player,
+          en: p.enabled,
+          ch: djChannelTotal(p),
+        })),
+      });
+
+      if (layoutKey === djBuiltLayout) {
+        updateDjValues(displayedPlayers);
+        return;
+      }
+      djBuiltLayout = layoutKey;
+
+      let html = '';
+      for (const player of displayedPlayers) {
+        const pi = player.player;
+        const role = String(player.role || 'PLAYER').toUpperCase();
+        const chPan = Array.isArray(player.ch_pan) ? player.ch_pan : [];
+        const chVol = Array.isArray(player.ch_vol_milli) ? player.ch_vol_milli : [];
+        const chEn  = Array.isArray(player.ch_enabled) ? player.ch_enabled : [];
+        const total = djChannelTotal(player);
+        const hasSolo = djHasSolo(pi);
+        const inactive = !player.enabled;
+
+        const chReverb = Array.isArray(player.ch_reverb_vol) ? player.ch_reverb_vol : [];
+
+        let strips = '';
+        for (let ci = 0; ci < total; ci++) {
+          const rawPan    = Number.isFinite(chPan[ci])    ? chPan[ci]    : 64;
+          const rawVol    = Number.isFinite(chVol[ci])    ? chVol[ci]    : 1000;
+          const rawReverb = Number.isFinite(chReverb[ci]) ? chReverb[ci] : 0;
+          const active = !!chEn[ci];
+          const ov = djGetOverride(pi, ci);
+          const displayPan    = ov.pan    !== null ? ov.pan    : rawPan;
+          const displayVol    = ov.muted ? 0 : (ov.volMilli !== null ? ov.volMilli : rawVol);
+          const displayReverb = ov.reverb !== null ? ov.reverb : rawReverb;
+          const panLabel  = displayPan < 64 ? 'L' + (64 - displayPan) : displayPan > 64 ? 'R' + (displayPan - 64) : 'C';
+          const reverbPct = Math.round(displayReverb / 127 * 100);
+          const volPct    = djVolToPercent(displayVol);
+          const dimmed    = hasSolo && !ov.soloed;
+
+          let cls = 'mixer-strip';
+          if (ov.muted) cls += ' muted';
+          if (dimmed)   cls += ' solo-dimmed';
+          if (!active && !ov.pan && !ov.volMilli && !ov.reverb && !ov.soloed) cls += ' inactive';
+
+          strips += `
+            <div class="${cls}" id="dj-strip-${pi}-${ci}">
+              <div class="strip-ch-label${active ? ' active' : ''}">CH ${ci}</div>
+
+              <div class="knob-wrap">
+                <div class="knob" data-value="${displayPan}" title="Pan — drag left/right, double-click to center">
+                  <div class="knob-dot" style="transform:translateX(-50%) rotate(${djPanToRotation(displayPan)}deg)"></div>
+                </div>
+                <div class="knob-label">${panLabel}</div>
+                <div class="knob-name">PAN</div>
+              </div>
+
+              <div class="fader-wrap">
+                <div class="fader-track" data-value="${displayVol}" title="Volume — drag up/down, double-click for 100%">
+                  <div class="fader-unity"></div>
+                  <div class="fader-fill" style="height:${volPct}%"></div>
+                  <div class="fader-thumb" style="bottom:${volPct}%"></div>
+                </div>
+                <div class="fader-vol-label">${(displayVol / 10).toFixed(0)}%</div>
+                <div class="fader-name">VOL</div>
+              </div>
+
+              <div class="knob-wrap">
+                <div class="knob reverb-knob" data-value="${displayReverb}" title="Reverb send — drag left/right, double-click to reset">
+                  <div class="knob-dot" style="transform:translateX(-50%) rotate(${djReverbToRotation(displayReverb)}deg)"></div>
+                </div>
+                <div class="knob-label">${reverbPct}%</div>
+                <div class="knob-name">REV</div>
+              </div>
+
+              <div class="strip-btns">
+                <button class="strip-mute${ov.muted ? ' muted' : ''}" type="button">${ov.muted ? 'MUTED' : 'M'}</button>
+                <button class="strip-solo${ov.soloed ? ' soloed' : ''}" type="button">${ov.soloed ? 'SOLO' : 'S'}</button>
+              </div>
+            </div>
+          `;
+        }
+
+        const inactiveLabel = inactive ? ' <span style="color:var(--muted-2);font-size:11px;font-weight:400;">(inactive)</span>' : '';
+        html += `
+          <div>
+            <div class="dj-player-label">
+              <div class="player-index" style="width:32px;height:32px;font-size:13px;${inactive ? 'opacity:0.45' : ''}">${pi}</div>
+              <h3>${role}${inactiveLabel}</h3>
+              <div class="badge">seq <strong>${fmt(player.seq_id)}</strong></div>
+              <button class="btn" type="button" style="font-size:11px;min-height:28px;padding:0 10px;"
+                      data-dj-reset-player="${pi}">Reset player</button>
+            </div>
+            <div class="mixer-board">${strips}</div>
+          </div>
+        `;
+      }
+
+      djContent.innerHTML = html;
+
+      // Wire up controls
+      for (const player of displayedPlayers) {
+        const pi = player.player;
+        const total = djChannelTotal(player);
+
+        for (let ci = 0; ci < total; ci++) {
+          const stripEl = document.getElementById('dj-strip-' + pi + '-' + ci);
+          if (!stripEl) continue;
+
+          const knob = stripEl.querySelector('.knob:not(.reverb-knob)');
+          if (knob) {
+            setupKnob(knob, (val) => {
+              knob.dataset.value = val;
+              const dot = knob.querySelector('.knob-dot');
+              if (dot) dot.style.transform = 'translateX(-50%) rotate(' + djPanToRotation(val) + 'deg)';
+              const knobLbl = knob.closest('.knob-wrap').querySelector('.knob-label');
+              if (knobLbl) knobLbl.textContent = val < 64 ? 'L' + (64 - val) : val > 64 ? 'R' + (val - 64) : 'C';
+              djSetOverride(pi, ci, { pan: val });
+            });
+          }
+
+          const reverbKnob = stripEl.querySelector('.reverb-knob');
+          if (reverbKnob) {
+            setupKnob(reverbKnob, (val) => {
+              reverbKnob.dataset.value = val;
+              const dot = reverbKnob.querySelector('.knob-dot');
+              if (dot) dot.style.transform = 'translateX(-50%) rotate(' + djReverbToRotation(val) + 'deg)';
+              const knobLbl = reverbKnob.closest('.knob-wrap').querySelector('.knob-label');
+              if (knobLbl) knobLbl.textContent = Math.round(val / 127 * 100) + '%';
+              djSetOverride(pi, ci, { reverb: val });
+            }, 0);
+          }
+
+          const faderTrack = stripEl.querySelector('.fader-track');
+          if (faderTrack) {
+            setupFader(faderTrack, (val) => {
+              faderTrack.dataset.value = val;
+              const fill = faderTrack.querySelector('.fader-fill');
+              const thumb = faderTrack.querySelector('.fader-thumb');
+              const pct = djVolToPercent(val);
+              if (fill) fill.style.height = pct + '%';
+              if (thumb) thumb.style.bottom = pct + '%';
+              const volLbl = stripEl.querySelector('.fader-vol-label');
+              if (volLbl) volLbl.textContent = (val / 10).toFixed(0) + '%';
+              // Dragging fader un-mutes the channel
+              djSetOverride(pi, ci, { volMilli: val, muted: false });
+              const muteBtn = stripEl.querySelector('.strip-mute');
+              if (muteBtn) { muteBtn.classList.remove('muted'); muteBtn.textContent = 'M'; }
+              stripEl.classList.remove('muted');
+            });
+          }
+
+          const muteBtn = stripEl.querySelector('.strip-mute');
+          if (muteBtn) {
+            muteBtn.addEventListener('click', () => {
+              const cur = djGetOverride(pi, ci);
+              const nowMuted = !cur.muted;
+              djSetOverride(pi, ci, { muted: nowMuted });
+              muteBtn.classList.toggle('muted', nowMuted);
+              muteBtn.textContent = nowMuted ? 'MUTED' : 'M';
+              stripEl.classList.toggle('muted', nowMuted);
+            });
+          }
+
+          const soloBtn = stripEl.querySelector('.strip-solo');
+          if (soloBtn) {
+            soloBtn.addEventListener('click', () => {
+              const cur = djGetOverride(pi, ci);
+              const nowSoloed = !cur.soloed;
+              djSetOverride(pi, ci, { soloed: nowSoloed });
+              soloBtn.classList.toggle('soloed', nowSoloed);
+              soloBtn.textContent = nowSoloed ? 'SOLO' : 'S';
+              // Re-apply solo state across all channels of this player
+              djApplySolo(pi, total);
+            });
+          }
+        }
+
+        // Per-player reset button
+        const resetBtn = djContent.querySelector('[data-dj-reset-player="' + pi + '"]');
+        if (resetBtn) {
+          resetBtn.addEventListener('click', () => {
+            if (!dj.overrides[pi]) return;
+            for (const ci of Object.keys(dj.overrides[pi])) {
+              djClearOverride(pi, Number(ci));
+            }
+            delete dj.overrides[pi];
+            djBuiltLayout = '';
+          });
+        }
+      }
+    }
+
+    const els = {};
+
+    function bindElements() {
+      els.connChip = document.getElementById('connChip');
+      els.connText = document.getElementById('connText');
+      els.phaseText = document.getElementById('phaseText');
+      els.khzModeText = document.getElementById('khzModeText');
+      els.snapshotTs = document.getElementById('snapshotTs');
+      els.statLastId = document.getElementById('statLastId');
+      els.statDropped = document.getElementById('statDropped');
+      els.statEnabledPlayers = document.getElementById('statEnabledPlayers');
+      els.statNotes = document.getElementById('statNotes');
+      els.statNotesSub = document.getElementById('statNotesSub');
+      els.statChannels = document.getElementById('statChannels');
+      els.sequenceStrip = document.getElementById('sequenceStrip');
+      els.playersGrid = document.getElementById('playersGrid');
+      els.eventList = document.getElementById('eventList');
+      els.eventSummary = document.getElementById('eventSummary');
+      els.eventStored = document.getElementById('eventStored');
+      els.eventVisible = document.getElementById('eventVisible');
+      els.eventNewestTs = document.getElementById('eventNewestTs');
+      els.playerSearch = document.getElementById('playerSearch');
+      els.playerSort = document.getElementById('playerSort');
+      els.showActiveChannelsBtn = document.getElementById('showActiveChannelsBtn');
+      els.showAllChannelsBtn = document.getElementById('showAllChannelsBtn');
+      els.eventSearch = document.getElementById('eventSearch');
+      els.eventLimit = document.getElementById('eventLimit');
+      els.pauseBtn = document.getElementById('pauseBtn');
+      els.clearBtn = document.getElementById('clearBtn');
+      els.tabOverviewBtn = document.getElementById('tabOverviewBtn');
+      els.tabEventsBtn = document.getElementById('tabEventsBtn');
+      els.tabDjBtn = document.getElementById('tabDjBtn');
+      els.overviewTab = document.getElementById('overviewTab');
+      els.eventsTab = document.getElementById('eventsTab');
+      els.djTab = document.getElementById('djTab');
+      els.djResetAllBtn = document.getElementById('djResetAllBtn');
+      els.djShowAllPlayersBtn = document.getElementById('djShowAllPlayersBtn');
+      els.djShowActivePlayersBtn = document.getElementById('djShowActivePlayersBtn');
+      els.streamsPanel = document.getElementById('streamsPanel');
+    }
+
+    function hasBoundElements() {
+      return !!(
+        els.connChip && els.connText && els.phaseText && els.khzModeText && els.snapshotTs &&
+        els.statLastId && els.statDropped && els.statEnabledPlayers && els.statNotes &&
+        els.statNotesSub && els.statChannels && els.sequenceStrip && els.playersGrid &&
+        els.eventList && els.eventSummary && els.eventStored && els.eventVisible &&
+        els.eventNewestTs && els.playerSearch && els.playerSort &&
+        els.showActiveChannelsBtn && els.showAllChannelsBtn && els.eventSearch &&
+        els.eventLimit && els.pauseBtn && els.clearBtn && els.tabOverviewBtn &&
+        els.tabEventsBtn && els.overviewTab && els.eventsTab &&
+        els.tabDjBtn && els.djTab && els.djResetAllBtn &&
+        els.djShowAllPlayersBtn && els.djShowActivePlayersBtn &&
+        els.streamsPanel
+      );
+    }
+
+    function safeNum(v, fallback = 0) {
+      return Number.isFinite(v) ? v : fallback;
+    }
+
+    function fmt(v) {
+      return Number.isFinite(v) ? String(v) : '-';
+    }
+
+    async function getJson(url) {
       const res = await fetch(url, { cache: 'no-store' });
       if (!res.ok) throw new Error(url + ' ' + res.status);
       return res.json();
     }
 
-    function setConn(ok) {
-      const el = document.getElementById('conn');
-      el.textContent = ok ? 'online' : 'offline';
-      el.className = 'v ' + (ok ? 'good' : 'bad');
+    function setConnection(isOnline) {
+      if (!els.connChip || !els.connText) return;
+      els.connChip.className = 'chip ' + (isOnline ? 'good' : 'bad');
+      els.connText.textContent = isOnline ? 'online' : 'offline';
+      if (!isOnline) state.tagsLoaded = false;
     }
 
-    function renderEvents() {
-      const tbody = document.getElementById('events');
-      tbody.innerHTML = eventRows.slice(-400).reverse().map(e =>
-        `<tr><td>${e.id}</td><td>${tags[e.tag] || e.tag}</td><td>${e.a}</td><td>${e.b}</td><td>${e.c}</td><td>${e.d}</td><td>${e.ts_ms}</td></tr>`
-      ).join('');
+    function rolePlayer(snapshot, wantedRole) {
+      const players = Array.isArray(snapshot.players) ? snapshot.players : [];
+      return players.find(p => String(p.role || '').toUpperCase() === wantedRole) || null;
     }
 
-    function renderPlayers(snapshot) {
-      const tbody = document.getElementById('players');
-      tbody.innerHTML = snapshot.players.map(p => {
-        const io = (p.seq_io || []).join('/');
-        const pan = `${p.pan_left_count}/${p.pan_center_count}/${p.pan_right_count} (${p.pan_average})`;
-        const notes = `${p.notes_active}/${p.notes_decaying}/${p.notes_releasing}`;
-        const chPan = p.ch_pan || [];
-        const chVol = p.ch_vol_milli || [];
-        const chEn = p.ch_enabled || [];
-        const layerPan = p.layer_pan || [];
-        const layerNotePan = p.layer_note_pan || [];
-        const noteTL = p.layer_note_target_l || [];
-        const noteTR = p.layer_note_target_r || [];
-        const noteCL = p.layer_note_cur_l || [];
-        const noteCR = p.layer_note_cur_r || [];
-        const first4 = [0, 1, 2, 3].map(i => {
-          const enabled = !!chEn[i];
-          const panValue = Number.isFinite(chPan[i]) ? chPan[i] : -1;
-          const vol = (Number.isFinite(chVol[i]) ? chVol[i] : 0) / 1000;
-          const panPct = panValue < 0 ? 50 : Math.max(0, Math.min(127, panValue)) / 127 * 100;
-          return `<div class="chrow ${enabled ? '' : 'is-off'}"><div class="chid">ch${i}</div><div class="pantrack"><span class="pancenter"></span><span class="panpos" style="left:${panPct}%"></span></div><div class="voltxt">${enabled ? vol.toFixed(2) : '-'}</div></div>`;
-        }).join('');
-        const layers = [0, 1, 2, 3].map(ch => {
-          const base = ch * 4;
-          const row = [0, 1, 2, 3].map(l => {
-            const lp = layerPan[base + l];
-            const lnp = layerNotePan[base + l];
-            return lp < 0 ? '-' : `${lp}/${lnp}`;
-          }).join(' ');
-          return `<div class="chrow"><div class="chid">ch${ch}</div><div style="grid-column: span 2; font-size:11px; color:var(--muted)">${row}</div></div>`;
-        }).join('');
-        const vols = [0, 1, 2, 3].map(ch => {
-          const base = ch * 4;
-          const row = [0, 1, 2, 3].map(l => {
-            const tl = noteTL[base + l];
-            const tr = noteTR[base + l];
-            const cl = noteCL[base + l];
-            const cr = noteCR[base + l];
-            return tl < 0 ? '-' : `${tl}/${tr}|${cl}/${cr}`;
-          }).join(' ');
-          return `<div class="chrow"><div class="chid">ch${ch}</div><div style="grid-column: span 2; font-size:11px; color:var(--muted)">${row}</div></div>`;
-        }).join('');
-        return `<tr><td>${p.player}</td><td>${p.role}</td><td>${p.seq_id}</td><td>${p.enabled}</td><td>${p.active_channel_count}</td><td>${pan}</td><td>${notes}</td><td><div class="chviz">${first4}</div></td><td><div class="chviz">${layers}</div></td><td><div class="chviz">${vols}</div></td><td>${io}</td></tr>`;
+    function buildSequenceCards(snapshot) {
+      const entries = [
+        { label: 'Main', seqId: snapshot.main_seq_id, player: rolePlayer(snapshot, 'BGM_MAIN') },
+        { label: 'Sub', seqId: snapshot.sub_seq_id, player: rolePlayer(snapshot, 'BGM_SUB') },
+        { label: 'Fanfare', seqId: snapshot.fanfare_seq_id, player: rolePlayer(snapshot, 'FANFARE') },
+        { label: 'Ambience', seqId: snapshot.ambience_seq_id, player: rolePlayer(snapshot, 'AMBIENCE') },
+      ];
+
+      return entries.map(entry => {
+        const p = entry.player || {};
+        return `
+          <div class="seq-card">
+            <div class="seq-top">
+              <div>
+                <div class="seq-name">${entry.label}</div>
+                <div class="seq-id">${fmt(entry.seqId)}</div>
+              </div>
+              <div class="badge"><strong>${p.enabled ? 'ON' : 'OFF'}</strong></div>
+            </div>
+            <div class="seq-meta">
+              <div>Player<strong>${fmt(p.player)}</strong></div>
+              <div>Channels<strong>${fmt(p.active_channel_count)}</strong></div>
+              <div>Notes<strong>${fmt(p.notes_active)}</strong></div>
+            </div>
+          </div>
+        `;
       }).join('');
     }
 
-    async function tick() {
-      try {
-        const [snapshot, events] = await Promise.all([
-          j('/snapshot'),
-          j('/events?since=' + since + '&limit=300')
-        ]);
+    function channelCountForPlayer(player) {
+      const mask = safeNum(player.active_channel_mask, 0);
+      const maxFromArrays = Math.max(
+        Array.isArray(player.ch_pan) ? player.ch_pan.length : 0,
+        Array.isArray(player.ch_vol_milli) ? player.ch_vol_milli.length : 0,
+        Array.isArray(player.ch_enabled) ? player.ch_enabled.length : 0,
+        4
+      );
+      const maxFromMask = mask > 0 ? 16 : 0;
+      return Math.max(maxFromArrays, maxFromMask);
+    }
 
-        setConn(true);
+    function channelIsActive(player, index) {
+      const chEn = Array.isArray(player.ch_enabled) ? player.ch_enabled : [];
+      const mask = safeNum(player.active_channel_mask, 0);
+      return !!chEn[index] || ((mask >>> index) & 1) === 1;
+    }
 
-        document.getElementById('phase').textContent = snapshot.init_phase;
-        document.getElementById('snapTs').textContent = 'ts: ' + snapshot.ts_ms;
-        document.getElementById('quickSeq').textContent = `${snapshot.main_seq_id} / ${snapshot.sub_seq_id} / ${snapshot.fanfare_seq_id}`;
-        document.getElementById('lastId').textContent = events.last_event_id;
-        document.getElementById('dropped').textContent = events.dropped_total;
-        document.getElementById('dropped').className = 'v ' + (events.dropped_total > 0 ? 'warn' : 'good');
+    function visibleChannelIndexes(player) {
+      const total = channelCountForPlayer(player);
+      const indexes = Array.from({ length: total }, (_, i) => i);
+      if (state.channelDisplayMode === 'all') return indexes;
+      const active = indexes.filter(i => channelIsActive(player, i));
+      return active.length ? active : indexes.filter(i => i < Math.min(total, 4));
+    }
 
-        renderPlayers(snapshot);
+    function panPercent(value) {
+      if (!Number.isFinite(value) || value < 0) return 50;
+      return Math.max(0, Math.min(127, value)) / 127 * 100;
+    }
 
-        if (events.events.length) {
-          since = events.events[events.events.length - 1].id;
-          eventRows.push(...events.events);
-          if (eventRows.length > 3000) eventRows.splice(0, eventRows.length - 3000);
-          renderEvents();
+    function buildChannelRows(player) {
+      const chPan = Array.isArray(player.ch_pan) ? player.ch_pan : [];
+      const chVol = Array.isArray(player.ch_vol_milli) ? player.ch_vol_milli : [];
+      const indexes = visibleChannelIndexes(player);
+
+      return indexes.map(i => {
+        const enabled = channelIsActive(player, i);
+        const pan = Number.isFinite(chPan[i]) ? chPan[i] : -1;
+        const vol = Number.isFinite(chVol[i]) ? chVol[i] / 1000 : null;
+        return `
+          <div class="channel-row ${enabled ? '' : 'off'}">
+            <div class="channel-name">ch${i}</div>
+            <div class="panbar"><div class="pan-marker" style="left:${panPercent(pan)}%"></div></div>
+            <div class="mono-small">${pan >= 0 ? 'pan ' + pan : '-'}</div>
+            <div class="mono-small">${vol !== null ? 'vol ' + vol.toFixed(2) : '-'}</div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function buildLayerRows(player, mode) {
+      const layerPan = Array.isArray(player.layer_pan) ? player.layer_pan : [];
+      const layerNotePan = Array.isArray(player.layer_note_pan) ? player.layer_note_pan : [];
+      const noteTL = Array.isArray(player.layer_note_target_l) ? player.layer_note_target_l : [];
+      const noteTR = Array.isArray(player.layer_note_target_r) ? player.layer_note_target_r : [];
+      const noteCL = Array.isArray(player.layer_note_cur_l) ? player.layer_note_cur_l : [];
+      const noteCR = Array.isArray(player.layer_note_cur_r) ? player.layer_note_cur_r : [];
+
+      const renderRow = (channel) => {
+        const base = channel * 4;
+        const cells = Array.from({ length: 4 }, (_, layer) => {
+          const idx = base + layer;
+          let content = '-';
+          let empty = true;
+
+          if (mode === 'pan') {
+            const lp = layerPan[idx];
+            const lnp = layerNotePan[idx];
+            if ((Number.isFinite(lp) && lp >= 0) || (Number.isFinite(lnp) && lnp >= 0)) {
+              content = `${fmt(lp)} / ${fmt(lnp)}`;
+              empty = false;
+            }
+          } else {
+            const tl = noteTL[idx];
+            const tr = noteTR[idx];
+            const cl = noteCL[idx];
+            const cr = noteCR[idx];
+            if ([tl, tr, cl, cr].some(v => Number.isFinite(v) && v >= 0)) {
+              content = `${fmt(tl)}/${fmt(tr)} → ${fmt(cl)}/${fmt(cr)}`;
+              empty = false;
+            }
+          }
+
+          return `<div class="cell ${empty ? 'empty' : ''}">${content}</div>`;
+        }).join('');
+
+        return `<div class="layer-row"><div class="mono-small" style="color:var(--muted);">ch${channel}</div>${cells}</div>`;
+      };
+
+      return `
+        <div class="layers-table">
+          <div class="layer-head"><div></div><div>L0</div><div>L1</div><div>L2</div><div>L3</div></div>
+          ${[0, 1, 2, 3].map(renderRow).join('')}
+        </div>
+      `;
+    }
+
+    function buildPlayerCard(player) {
+      const io = Array.isArray(player.seq_io) && player.seq_io.length ? player.seq_io.join(' / ') : '-';
+      return `
+        <article class="player-card">
+          <div class="player-head">
+            <div class="player-title">
+              <div class="player-index">${fmt(player.player)}</div>
+              <div class="player-title-text">
+                <h3>${String(player.role || 'player').toUpperCase()}</h3>
+                <p>${player.enabled ? 'Enabled' : 'Disabled'} · pan avg ${fmt(player.pan_average)} · ${fmt(player.pan_left_count)}/${fmt(player.pan_center_count)}/${fmt(player.pan_right_count)} L/C/R</p>
+              </div>
+            </div>
+            <div class="badge-row">
+              <div class="badge">seq <strong>${fmt(player.seq_id)}</strong></div>
+              <div class="badge">io <strong>${io}</strong></div>
+            </div>
+          </div>
+
+          <div class="metric-grid">
+            <div class="metric"><div class="k">Active notes</div><div class="v">${fmt(player.notes_active)}</div></div>
+            <div class="metric"><div class="k">Decay</div><div class="v">${fmt(player.notes_decaying)}</div></div>
+            <div class="metric"><div class="k">Release</div><div class="v">${fmt(player.notes_releasing)}</div></div>
+            <div class="metric"><div class="k">Channels</div><div class="v">${fmt(player.active_channel_count)}</div></div>
+          </div>
+
+          <div>
+            <div class="section-label"><span>Channel pan and volume</span><span>${state.channelDisplayMode === 'all' ? 'all channels' : 'active channels only'}</span></div>
+            <div class="channels">${buildChannelRows(player)}</div>
+          </div>
+
+          <div>
+            <div class="section-label"><span>Layer pan / note pan</span><span>per channel</span></div>
+            ${buildLayerRows(player, 'pan')}
+          </div>
+
+          <div>
+            <div class="section-label"><span>Layer target LR → current LR</span><span>per channel</span></div>
+            ${buildLayerRows(player, 'lr')}
+          </div>
+        </article>
+      `;
+    }
+
+    function renderPlayers(snapshot) {
+      if (!els.playersGrid || !els.playerSearch || !els.playerSort) return;
+      const players = Array.isArray(snapshot.players) ? [...snapshot.players] : [];
+      const q = els.playerSearch.value.trim().toLowerCase();
+      const sort = els.playerSort.value;
+
+      let filtered = players.filter(p => {
+        if (!q) return true;
+        const hay = [p.role, p.player, p.seq_id, p.enabled ? 'enabled' : 'disabled']
+          .map(v => String(v ?? '').toLowerCase())
+          .join(' ');
+        return hay.includes(q);
+      });
+
+      filtered.sort((a, b) => {
+        if (sort === 'seq') return safeNum(a.seq_id) - safeNum(b.seq_id);
+        if (sort === 'notes') return safeNum(b.notes_active) - safeNum(a.notes_active);
+        if (sort === 'channels') return safeNum(b.active_channel_count) - safeNum(a.active_channel_count);
+        if (sort === 'pan') return safeNum(b.pan_average, -999) - safeNum(a.pan_average, -999);
+        return safeNum(a.player) - safeNum(b.player);
+      });
+
+      els.playersGrid.innerHTML = filtered.length
+        ? filtered.map(buildPlayerCard).join('')
+        : '<div class="empty-state">No players match the current filter.</div>';
+    }
+
+    function summarizeEvents(events) {
+      const map = new Map();
+      for (const e of events) {
+        const name = tags[e.tag] || String(e.tag);
+        map.set(name, (map.get(name) || 0) + 1);
+      }
+      return [...map.entries()].sort((a, b) => b[1] - a[1]).slice(0, 12);
+    }
+
+    function renderEventSummary(events) {
+      if (!els.eventSummary) return;
+      const summary = summarizeEvents(events);
+      const total = events.length || 1;
+      els.eventSummary.innerHTML = summary.length
+        ? summary.map(([name, count], idx) => `
+            <div class="summary-row">
+              <div class="summary-name"><span class="badge">#${idx + 1}</span><span>${name}</span></div>
+              <div class="summary-count">${count}</div>
+              <div class="summary-share">${Math.round(count / total * 100)}%</div>
+            </div>
+          `).join('')
+        : '<div class="empty-state">No events captured yet.</div>';
+    }
+
+    function renderEvents() {
+      if (!els.eventSearch || !els.eventLimit || !els.eventStored || !els.eventVisible || !els.eventNewestTs || !els.eventList) return;
+      const q = els.eventSearch.value.trim().toLowerCase();
+      const limit = Number(els.eventLimit.value) || 100;
+      let filtered = state.events.filter(e => {
+        if (!q) return true;
+        const hay = [tags[e.tag] || e.tag, e.a, e.b, e.c, e.d, e.id, e.ts_ms].join(' ').toLowerCase();
+        return hay.includes(q);
+      });
+
+      filtered = filtered.slice(-limit).reverse();
+      els.eventStored.textContent = String(state.events.length);
+      els.eventVisible.textContent = String(filtered.length);
+      els.eventNewestTs.textContent = state.events.length ? String(state.events[state.events.length - 1].ts_ms) : '-';
+
+      if (!filtered.length) {
+        els.eventList.innerHTML = '<div class="empty-state">No events match the current filter.</div>';
+        return;
+      }
+
+      els.eventList.innerHTML = `
+        <div class="event-table">
+          <div class="event-table-head">
+            <div>ID</div>
+            <div>Timestamp</div>
+            <div>Tag</div>
+            <div>A</div>
+            <div>B</div>
+            <div>C</div>
+            <div>D</div>
+          </div>
+          ${filtered.map(e => `
+            <div class="event-row">
+              <div class="event-id-cell">#${e.id}</div>
+              <div class="event-ts-cell">${e.ts_ms}</div>
+              <div class="event-tag-cell">${tags[e.tag] || e.tag}</div>
+              <div class="event-num">${e.a}</div>
+              <div class="event-num">${e.b}</div>
+              <div class="event-num">${e.c}</div>
+              <div class="event-num">${e.d}</div>
+            </div>
+          `).join('')}
+        </div>
+      `;
+    }
+
+    function renderStreams(streams) {
+      if (!els.streamsPanel) return;
+      if (!Array.isArray(streams) || streams.length === 0) {
+        els.streamsPanel.innerHTML = '<p style="color:var(--muted);margin:0">No streamed audio active.</p>';
+        return;
+      }
+
+      // Group by resourceId so stereo pairs appear together
+      const byResource = {};
+      for (const s of streams) {
+        const key = s.resource_id;
+        if (!byResource[key]) byResource[key] = [];
+        byResource[key].push(s);
+      }
+
+      let html = '<div style="display:flex;flex-direction:column;gap:14px">';
+      for (const [rid, tracks] of Object.entries(byResource)) {
+        // Use track 0 for file-level info; all tracks share the same sample_count/loop bounds
+        const t0 = tracks[0];
+        const sampleCount = t0.sample_count || 1;
+        const loopStart   = t0.loop_start;
+        const loopEnd     = t0.loop_end || sampleCount;
+        const loopCount   = t0.loop_count;
+        const loopLabel   = loopCount === -1 ? '∞' : String(loopCount);
+        const sampleRate  = 32000; // assumed — not in stream state
+
+        const pct = pos => Math.max(0, Math.min(100, (pos / sampleCount) * 100)).toFixed(2);
+        const loopStartPct = pct(loopStart);
+        const loopEndPct   = pct(loopEnd);
+
+        html += `<div style="background:var(--bg-elev-2);border:1px solid var(--line-soft);border-radius:12px;padding:12px 14px">`;
+        html += `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">`;
+        html += `<span style="font-family:var(--mono);font-size:13px;color:var(--accent)">resource #${rid}</span>`;
+        html += `<span style="font-size:11px;color:var(--muted)">`;
+        html += `loop&nbsp;start&nbsp;<strong style="color:var(--text)">${loopStart}</strong>&nbsp;&nbsp;`;
+        html += `loop&nbsp;end&nbsp;<strong style="color:var(--text)">${loopEnd}</strong>&nbsp;&nbsp;`;
+        html += `count&nbsp;<strong style="color:var(--text)">${loopLabel}</strong>&nbsp;&nbsp;`;
+        html += `total&nbsp;<strong style="color:var(--text)">${sampleCount}</strong>`;
+        html += `</span></div>`;
+
+        for (const s of tracks) {
+          const pos = s.pos;
+          const trackPct = pct(pos);
+          const inLoop = pos >= loopStart && pos <= loopEnd;
+          const posColor = inLoop ? 'var(--good)' : 'var(--warn)';
+
+          html += `<div style="margin-bottom:6px">`;
+          html += `<div style="display:flex;justify-content:space-between;font-size:11px;color:var(--muted);margin-bottom:3px">`;
+          html += `<span>track ${s.track_no}</span>`;
+          html += `<span style="font-family:var(--mono);color:${posColor}">pos&nbsp;${pos}&nbsp;(${trackPct}%)</span>`;
+          html += `</div>`;
+
+          // Progress bar: grey bg, loop region in accent, playhead marker
+          html += `<div style="position:relative;height:8px;border-radius:4px;background:var(--bg-elev);overflow:hidden">`;
+          // Loop region
+          html += `<div style="position:absolute;top:0;bottom:0;left:${loopStartPct}%;width:${(loopEndPct - loopStartPct).toFixed(2)}%;background:rgba(120,184,255,0.18)"></div>`;
+          // Playhead
+          html += `<div style="position:absolute;top:0;bottom:0;left:${trackPct}%;width:2px;background:${posColor};border-radius:1px"></div>`;
+          html += `</div>`;
+          html += `</div>`;
         }
-      } catch (err) {
-        setConn(false);
+
+        html += `</div>`;
+      }
+      html += '</div>';
+      els.streamsPanel.innerHTML = html;
+    }
+
+    function renderSnapshot(snapshot, eventsMeta) {
+      if (!hasBoundElements()) return;
+      const players = Array.isArray(snapshot.players) ? snapshot.players : [];
+      const enabledPlayers = players.filter(p => !!p.enabled).length;
+      const noteActive = players.reduce((sum, p) => sum + safeNum(p.notes_active), 0);
+      const noteDecay = players.reduce((sum, p) => sum + safeNum(p.notes_decaying), 0);
+      const noteRelease = players.reduce((sum, p) => sum + safeNum(p.notes_releasing), 0);
+      const activeChannels = players.reduce((sum, p) => sum + safeNum(p.active_channel_count), 0);
+
+      els.phaseText.textContent = snapshot.init_phase ?? '-';
+      els.khzModeText.textContent = snapshot.khz_mode == null ? '-' : (snapshot.khz_mode ? '48kHz' : '32kHz');
+      els.khzModeText.style.color = snapshot.khz_mode == null ? '' : (snapshot.khz_mode ? 'var(--good)' : 'var(--warn)');
+      els.snapshotTs.textContent = snapshot.ts_ms ?? '-';
+      els.statLastId.textContent = String(eventsMeta.last_event_id ?? 0);
+      els.statDropped.textContent = String(eventsMeta.dropped_total ?? 0);
+      els.statDropped.style.color = (eventsMeta.dropped_total ?? 0) > 0 ? 'var(--warn)' : 'var(--text)';
+      els.statEnabledPlayers.textContent = `${enabledPlayers} / ${players.length}`;
+      els.statNotes.textContent = String(noteActive);
+      els.statNotesSub.textContent = `${noteActive} active · ${noteDecay} decaying · ${noteRelease} releasing`;
+      els.statChannels.textContent = String(activeChannels);
+      els.sequenceStrip.innerHTML = buildSequenceCards(snapshot);
+      renderPlayers(snapshot);
+      if (state.activeTab === 'dj') {
+        buildDjMixer(Array.isArray(snapshot.players) ? snapshot.players : []);
       }
     }
 
-    setInterval(tick, 300);
-    tick();
+    async function tick() {
+      if (state.paused) return;
+      try {
+        const [snapshot, eventsMeta, streamsData] = await Promise.all([
+          getJson(API_BASE + '/snapshot'),
+          getJson(API_BASE + '/events?since=' + state.since + '&limit=300'),
+          getJson(API_BASE + '/streams')
+        ]);
+
+        setConnection(true);
+
+        if (!state.tagsLoaded) {
+          state.tagsLoaded = true;
+          getJson(API_BASE + '/tags').then(data => {
+            if (data && data.tags) {
+              for (const [k, v] of Object.entries(data.tags)) {
+                tags[Number(k)] = String(v);
+              }
+            }
+          }).catch(() => {});
+        }
+
+        state.snapshot = snapshot;
+        renderSnapshot(snapshot, eventsMeta);
+        renderStreams(streamsData && Array.isArray(streamsData.streams) ? streamsData.streams : []);
+
+        const incoming = Array.isArray(eventsMeta.events) ? eventsMeta.events : [];
+        if (incoming.length) {
+          state.since = incoming[incoming.length - 1].id;
+          state.events.push(...incoming);
+          if (state.events.length > 4000) {
+            state.events.splice(0, state.events.length - 4000);
+          }
+        }
+
+        renderEvents();
+        renderEventSummary(state.events);
+      } catch (err) {
+        console.error(err);
+        setConnection(false);
+      }
+    }
+
+    function setupEventHandlers() {
+      els.pauseBtn.addEventListener('click', () => {
+        state.paused = !state.paused;
+        els.pauseBtn.textContent = state.paused ? 'Resume' : 'Pause';
+      });
+
+      els.clearBtn.addEventListener('click', () => {
+        state.events = [];
+        renderEvents();
+        renderEventSummary(state.events);
+      });
+
+      els.playerSearch.addEventListener('input', () => {
+        if (state.snapshot) renderPlayers(state.snapshot);
+      });
+
+      els.playerSort.addEventListener('change', () => {
+        if (state.snapshot) renderPlayers(state.snapshot);
+      });
+
+      const setChannelDisplayMode = (mode) => {
+        state.channelDisplayMode = mode;
+        els.showActiveChannelsBtn.classList.toggle('active', mode === 'active');
+        els.showAllChannelsBtn.classList.toggle('active', mode === 'all');
+        if (state.snapshot) renderPlayers(state.snapshot);
+      };
+
+      els.showActiveChannelsBtn.addEventListener('click', () => setChannelDisplayMode('active'));
+      els.showAllChannelsBtn.addEventListener('click', () => setChannelDisplayMode('all'));
+
+      els.eventSearch.addEventListener('input', renderEvents);
+      els.eventLimit.addEventListener('change', renderEvents);
+
+      const notifyMixerOpen = (open) => {
+        fetch(API_BASE + '/mixer-open', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ open: open ? 1 : 0 }),
+        }).catch(() => {});
+      };
+
+      const activateTab = (tabName) => {
+        const wasDj = state.activeTab === 'dj';
+        state.activeTab = tabName;
+        els.tabOverviewBtn.classList.toggle('active', tabName === 'overview');
+        els.tabEventsBtn.classList.toggle('active', tabName === 'events');
+        els.tabDjBtn.classList.toggle('active', tabName === 'dj');
+        els.overviewTab.classList.toggle('active', tabName === 'overview');
+        els.eventsTab.classList.toggle('active', tabName === 'events');
+        els.djTab.classList.toggle('active', tabName === 'dj');
+        if (tabName === 'dj') {
+          notifyMixerOpen(true);
+          if (state.snapshot) {
+            buildDjMixer(Array.isArray(state.snapshot.players) ? state.snapshot.players : []);
+          }
+        } else if (wasDj) {
+          notifyMixerOpen(false);
+        }
+      };
+
+      els.tabOverviewBtn.addEventListener('click', () => activateTab('overview'));
+      els.tabEventsBtn.addEventListener('click', () => activateTab('events'));
+      els.tabDjBtn.addEventListener('click', () => activateTab('dj'));
+
+      els.djResetAllBtn.addEventListener('click', () => {
+        djClearAll();
+        djBuiltLayout = '';
+      });
+
+      const setDjPlayerFilter = (showAll) => {
+        dj.showAllPlayers = showAll;
+        els.djShowAllPlayersBtn.classList.toggle('active', showAll);
+        els.djShowActivePlayersBtn.classList.toggle('active', !showAll);
+        djBuiltLayout = '';
+        if (state.snapshot) buildDjMixer(Array.isArray(state.snapshot.players) ? state.snapshot.players : []);
+      };
+      els.djShowAllPlayersBtn.addEventListener('click', () => setDjPlayerFilter(true));
+      els.djShowActivePlayersBtn.addEventListener('click', () => setDjPlayerFilter(false));
+    }
+
+    function init() {
+      bindElements();
+      if (!hasBoundElements()) {
+        console.error('Audio UI init failed: required DOM nodes are missing.');
+        return;
+      }
+
+      setupEventHandlers();
+      renderEvents();
+      renderEventSummary([]);
+      window.addEventListener('beforeunload', () => {
+        if (state.activeTab === 'dj') {
+          navigator.sendBeacon(API_BASE + '/mixer-open', JSON.stringify({ open: 0 }));
+        }
+      });
+      state.timer = setInterval(tick, 300);
+      tick();
+    }
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', init, { once: true });
+    } else {
+      init();
+    }
   </script>
 </body>
 </html>

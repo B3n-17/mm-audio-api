@@ -97,6 +97,18 @@ RECOMP_DLL_FUNC(AudioApiNative_DebugSetEnabled) {
     RECOMP_RETURN(bool, true);
 }
 
+RECOMP_DLL_FUNC(AudioApiNative_DebugSetMixerOpen) {
+    auto open = RECOMP_ARG(uint32_t, 0);
+    Debug::setMixerOpen(open != 0);
+    RECOMP_RETURN(bool, true);
+}
+
+RECOMP_DLL_FUNC(AudioApiNative_DebugSetKhzMode) {
+    auto enabled = RECOMP_ARG(uint32_t, 0) != 0;
+    Debug::setKhzMode(enabled);
+    RECOMP_RETURN(bool, true);
+}
+
 RECOMP_DLL_FUNC(AudioApiNative_DebugSetSnapshot) {
     auto initPhase = RECOMP_ARG(uint32_t, 0);
     auto mainSeqId = RECOMP_ARG(int32_t, 1);
@@ -123,6 +135,46 @@ RECOMP_DLL_FUNC(AudioApiNative_DebugEvent) {
     RECOMP_RETURN(bool, true);
 }
 
+RECOMP_DLL_FUNC(AudioApiNative_DebugPushEvent) {
+    auto tag = RECOMP_ARG(uint32_t, 0);
+    auto a = RECOMP_ARG(int32_t, 1);
+    auto b = RECOMP_ARG(int32_t, 2);
+    auto args = TO_PTR(int32_t, RECOMP_ARG(int32_t, 3));
+    Debug::pushEvent(tag, a, b, args[0], args[1]);
+    RECOMP_RETURN(bool, true);
+}
+
+RECOMP_DLL_FUNC(AudioApiNative_DebugRegisterTag) {
+    auto tag = RECOMP_ARG(uint32_t, 0);
+    auto name = RECOMP_ARG_U8STR(1);
+    Debug::registerTag(tag, reinterpret_cast<const char*>(name.c_str()));
+    RECOMP_RETURN(bool, true);
+}
+
+RECOMP_DLL_FUNC(AudioApiNative_DebugGetMixOverride) {
+    if (!Debug::isEnabled() || !Debug::isMixerOpen()) {
+        RECOMP_RETURN(bool, false);
+    }
+    auto playerIndex  = RECOMP_ARG(uint32_t, 0);
+    auto channelIndex = RECOMP_ARG(uint32_t, 1);
+    auto out          = TO_PTR(int32_t, RECOMP_ARG(int32_t, 2));
+    auto ov = Debug::getMixOverride(playerIndex, channelIndex);
+    // out[0] = pan (-1 = passthrough), out[1] = vol_milli (-1 = passthrough),
+    // out[2] = muted, out[3] = reverb (-1 = passthrough)
+    if (!ov.active) {
+        out[0] = -1;
+        out[1] = -1;
+        out[2] = 0;
+        out[3] = -1;
+    } else {
+        out[0] = ov.pan;
+        out[1] = ov.volMilli;
+        out[2] = ov.muted ? 1 : 0;
+        out[3] = ov.reverb;
+    }
+    RECOMP_RETURN(bool, true);
+}
+
 RECOMP_DLL_FUNC(AudioApiNative_Dma) {
     auto ptr = RECOMP_ARG(int32_t, 0);
     size_t size = RECOMP_ARG(uint32_t, 1);
@@ -146,6 +198,21 @@ RECOMP_DLL_FUNC(AudioApiNative_Dma) {
 
         resource->dma(rdram, ptr, offset, size, args[1], args[2]);
         queuePreload(resourceId);
+
+        if (Debug::isEnabled()) {
+            auto af = std::dynamic_pointer_cast<Resource::Audiofile>(resource);
+            if (af) {
+                Debug::setStreamState(
+                    static_cast<uint32_t>(resourceId),
+                    args[1],
+                    static_cast<int32_t>(offset),
+                    af->metadata->sampleCount,
+                    af->metadata->loopStart,
+                    af->metadata->loopEnd,
+                    af->metadata->loopCount
+                );
+            }
+        }
 
         RECOMP_RETURN(bool, true);
 

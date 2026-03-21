@@ -776,6 +776,13 @@ RECOMP_PATCH Acmd* AudioSynth_ProcessSample(s32 noteIndex, NoteSampleState* samp
                     break; // break out of the while loop
                 } else if (loopToPoint) {
                     synthState->atLoopPoint = true;
+                    // Invalidate any RSP cache entries for this stream's devAddr before resetting
+                    // samplePosInt to the loop start. Without this, offset-based cache hits from
+                    // the previous loop pass (same devAddr + same offset range) would be returned
+                    // as valid, causing the RSP to read stale audio data and corrupt the buffer.
+                    if (IS_DMA_CALLBACK_DEV_ADDR(sampleAddr)) {
+                        AudioApi_RspCacheInvalidateDevAddr((uintptr_t)sampleAddr);
+                    }
                     synthState->samplePosInt = loopInfo->header.start;
                 } else {
                     synthState->samplePosInt += numSamplesToProcess;
@@ -828,9 +835,17 @@ RECOMP_PATCH Acmd* AudioSynth_ProcessSample(s32 noteIndex, NoteSampleState* samp
         flags = A_INIT;
     }
 
-    // Resample the decompressed mono-signal to the correct pitch
-    cmd = AudioSynth_FinalResample(cmd, synthState, numSamplesPerUpdate * SAMPLE_SIZE, frequencyFixedPoint,
-                                   sampleDmemBeforeResampling, flags);
+    // Resample the decompressed mono-signal to the correct pitch.
+    // For CODEC_S16 at unity pitch (0x8000), bypass aResample entirely: the RSP resampler's
+    // built-in FIR lowpass is calibrated for 32kHz and would alias 48kHz content above 16kHz.
+    // A plain DMEM move is sufficient since no pitch conversion is needed.
+    if (!sampleState->bitField1.isSyntheticWave && sample->codec == CODEC_S16 &&
+        frequencyFixedPoint == 0x8000) {
+        AudioSynth_DMemMove(cmd++, sampleDmemBeforeResampling, DMEM_TEMP, numSamplesPerUpdate * SAMPLE_SIZE);
+    } else {
+        cmd = AudioSynth_FinalResample(cmd, synthState, numSamplesPerUpdate * SAMPLE_SIZE, frequencyFixedPoint,
+                                       sampleDmemBeforeResampling, flags);
+    }
 
     // UnkCmd19 was removed from the audio microcode
     // This block performs no operation
@@ -876,6 +891,13 @@ RECOMP_PATCH Acmd* AudioSynth_ProcessSample(s32 noteIndex, NoteSampleState* samp
             cmd = AudioSynth_ApplySurroundEffect(cmd, sampleState, synthState, numSamplesPerUpdate,
                                                  DMEM_TEMP, flags);
         }
+    }
+
+    // Streamed PCM (CODEC_S16) should not feed the reverb bus: the RSP resampler's built-in
+    // lowpass filter is calibrated for 32kHz, so any wet signal routed through the reverb
+    // downsample/upsample cycle picks up the 16kHz mirror artifact.
+    if (!sampleState->bitField1.isSyntheticWave && sample->codec == CODEC_S16) {
+        sampleState->targetReverbVol = 0;
     }
 
     // Split the mono-signal into left and right channels:

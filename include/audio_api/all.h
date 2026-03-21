@@ -10,6 +10,7 @@
 #include "types.h"
 #include "base.h"
 #include "cseq.h"
+#include "debug.h"
 #include "sequence.h"
 #include "soundfont.h"
 #include "porcelain.h"

@@ -3,8 +3,11 @@
 
 #include <global.h>
 
-#define FREQ_FACTOR 1.5f // how much to scale the game's output, i.e. 32kHz -> 48kHz
-#define NUM_SUB_UPDATES 2 // further subdivide each update per frame to avoid DMEM issues
+// Runtime values — set from config in AudioLoad_Init before heap/effects init.
+// When disabled, FREQ_FACTOR=1.0 and NUM_SUB_UPDATES=1 (vanilla 32kHz behaviour).
+extern bool gAudioApi48kHzEnabled;
+#define FREQ_FACTOR     (gAudioApi48kHzEnabled ? 1.5f : 1.0f)
+#define NUM_SUB_UPDATES (gAudioApi48kHzEnabled ? 2    : 1)
 
 #undef AIBUF_LEN
 #undef AIBUF_SIZE

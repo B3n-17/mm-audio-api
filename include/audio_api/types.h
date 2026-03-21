@@ -57,6 +57,8 @@ typedef enum : u32 {
     AUDIOAPI_SEQ_IO_CREDITS_2,     // Channel 15, IO port 0: 12 cue pulses for credits part 2 scene transitions
     AUDIOAPI_SEQ_IO_WINDFISH,      // Ballad special-case: keep vanilla seq_84 for partial band, redirect full mix
     AUDIOAPI_SEQ_IO_FROG,          // Frog Song beat pulses on IO_PORT_0 for minigame timing
+    AUDIOAPI_SEQ_IO_KAMARO,        // Kamaro dance: infinite loop, sets SEQ_FLAG_FANFARE_KAMARO
+    AUDIOAPI_SEQ_IO_KEATON,        // Keaton quiz: infinite loop fanfare
 } AudioApiSequenceIO;
 
 typedef enum : u32 {

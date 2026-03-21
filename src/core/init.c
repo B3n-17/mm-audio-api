@@ -32,6 +32,9 @@ extern void AudioLoad_InitTable(AudioTable* table, uintptr_t romAddr, u16 unkMed
 
 AudioApiInitPhase gAudioApiInitPhase = AUDIOAPI_INIT_NOT_READY;
 
+// Enabled by default; overridden in AudioLoad_Init from config key "audio_48khz_disable".
+bool gAudioApi48kHzEnabled = true;
+
 /* Internal events — API subsystems register RECOMP_CALLBACKs on these (e.g. effects.c, load.c) */
 RECOMP_DECLARE_EVENT(AudioApi_InitInternal());
 RECOMP_DECLARE_EVENT(AudioApi_ReadyInternal());
@@ -67,7 +70,7 @@ RECOMP_HOOK_RETURN("AudioThread_UpdateImpl") void on_AudioThread_UpdateImpl() {
 /*
  * Full replacement of AudioLoad_Init. Vanilla flow is preserved (zero ctx, set refresh rate,
  * init queues, partition heap, connect ROM tables) with these modifications:
- *   - AI buffer sized for 48kHz (AIBUF_SIZE uses scaled AIBUF_LEN from init.h)
+ *   - AI buffer sized by AIBUF_SIZE (uses AIBUF_LEN from init.h, scales with 48kHz toggle)
  *   - initPool shrunk to just AI buffers; remaining heap goes to sessionPool
  *   - 4-phase event dispatch inserted after table init (see lifecycle table above)
  *   - Triggers immediate AudioHeap_ResetStep to initialize audio heap with new params
@@ -151,6 +154,11 @@ RECOMP_PATCH void AudioLoad_Init(void* heap, size_t heapSize) {
     for (i = 0; i < ((s32)gAudioCtx.audioHeapSize / (s32)sizeof(u64)); i++) {
         ((u64*)gAudioCtx.audioHeap)[i] = 0;
     }
+
+    // @mod Read 48kHz toggle first — AIBUF_SIZE and InitInternal callbacks both depend on it.
+    // Key "audio_48khz_disable" = 1 restores vanilla 32kHz output. Requires restart.
+    gAudioApi48kHzEnabled = recomp_get_config_u32("audio_48khz_disable") == 0;
+    recomp_printf("[AudioAPI] 48kHz mode: %s\n", gAudioApi48kHzEnabled ? "enabled" : "disabled");
 
     // @mod We only need to store the ai buffer here
     gAudioHeapInitSizes.initPoolSize = AIBUF_SIZE * ARRAY_COUNT(gAudioCtx.aiBuffers) + 0x100;

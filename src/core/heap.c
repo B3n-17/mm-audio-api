@@ -1,5 +1,6 @@
 #include <core/heap.h>
 #include <recomp/modding.h>
+#include <recomp/recomputils.h>
 #include <utils/misc.h>
 #include <core/init.h>
 
@@ -239,6 +240,18 @@ void AudioApi_RspCacheInvalidateAddr(void* addr, size_t size) {
     }
 }
 
+// Invalidate all cache entries keyed to a specific devAddr (used by DMA callback offset-based
+// entries). Called on loop restart to prevent stale entries from a previous loop pass being
+// returned as hits for the same devAddr+offset on the new pass.
+void AudioApi_RspCacheInvalidateDevAddr(uintptr_t devAddr) {
+    for (s32 i = 0; i < RSP_CACHE_CAPACITY; i++) {
+        RspCacheEntry* entry = &rspCache.entries[i];
+        if (entry->addr == devAddr) {
+            entry->cacheAddr = NULL;
+        }
+    }
+}
+
 void AudioApi_InitHeap() {
     AudioHeap_InitPool(&loadBuffer.pool,
                        AudioHeap_AllocDmaMemory(&gAudioCtx.miscPool, LOAD_BUFFER_SIZE), LOAD_BUFFER_SIZE);
@@ -322,6 +335,10 @@ RECOMP_PATCH void AudioHeap_Init(void) {
     gAudioCtx.audioBufferParameters.samplingFreq = spec->samplingFreq * FREQ_FACTOR;
     gAudioCtx.audioBufferParameters.aiSamplingFreq = osAiSetFrequency(gAudioCtx.audioBufferParameters.samplingFreq);
     gAudioCtx.audioBufferParameters.resampleRate = 32000.0f / (s32)gAudioCtx.audioBufferParameters.samplingFreq;
+    recomp_printf("[AudioAPI] AudioHeap_Init: 48kHz=%d specFreq=%d samplingFreq=%d resampleRate=%.4f\n",
+        (int)gAudioApi48kHzEnabled, (int)spec->samplingFreq,
+        (int)gAudioCtx.audioBufferParameters.samplingFreq,
+        gAudioCtx.audioBufferParameters.resampleRate);
 
     gAudioCtx.audioBufferParameters.numSamplesPerFrameTarget *= FREQ_FACTOR;
     gAudioCtx.audioBufferParameters.numSamplesPerFrameMin *= FREQ_FACTOR;

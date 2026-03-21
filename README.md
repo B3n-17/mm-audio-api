@@ -320,6 +320,81 @@ cseq_compile(seq, 0);
 cseq_destroy(seq);
 ```
 
+### Debug UI
+
+The Audio API ships with a browser-based debug panel for live inspection of audio state and events.
+
+#### Enabling the panel
+
+The panel is disabled by default. Enable it in the Zelda 64: Recompiled mod settings UI before starting a game session, or add `debug_http = true` to your mod configuration. Once enabled, the HTTP server starts on `http://127.0.0.1:18480` and the panel is accessible at:
+
+```
+http://127.0.0.1:18480/audio-debug.html
+```
+
+#### HTTP endpoints
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /snapshot` | Current audio system state (players, sequences, notes, channels) |
+| `GET /events?since=<id>&limit=<n>` | Events since a given event ID (max 2048 per request) |
+| `GET /tags` | All registered event tag names (built-in + mod-registered) |
+| `GET /health` | Server liveness check |
+
+#### Mod Event API
+
+Any mod that depends on `magemods_audio_api` can push custom events and register human-readable tag names that appear in the Events tab of the debug UI.
+
+Include the debug header:
+
+```c
+#include <audio_api/debug.h>
+// or via all.h
+#include <audio_api/all.h>
+```
+
+##### Tag namespace
+
+Tags 1–4095 (`0x000`–`0xFFF`) are reserved for internal audio API events. Downstream mods must use tags `>= 0x1000`.
+
+To avoid collisions between unrelated mods, pick a distinctive base value — for example by encoding a short ASCII prefix into the upper bytes:
+
+```c
+#define MY_MOD_TAG_BASE  0x4D594D00u   // 'MYM\0'
+#define MY_TAG_SONG_START  (MY_MOD_TAG_BASE + 0)
+#define MY_TAG_SONG_STOP   (MY_MOD_TAG_BASE + 1)
+#define MY_TAG_VOLUME_SET  (MY_MOD_TAG_BASE + 2)
+```
+
+##### Registering tag names
+
+Register names during `AudioApi_Init` so the debug UI can display them:
+
+```c
+RECOMP_CALLBACK("magemods_audio_api", AudioApi_Init)
+void MyMod_AudioInit() {
+    AudioApi_DebugRegisterTag(MY_TAG_SONG_START, "MY_MOD_SONG_START");
+    AudioApi_DebugRegisterTag(MY_TAG_SONG_STOP,  "MY_MOD_SONG_STOP");
+    AudioApi_DebugRegisterTag(MY_TAG_VOLUME_SET, "MY_MOD_VOLUME_SET");
+
+    // ... register sequences, soundfonts, etc.
+}
+```
+
+##### Pushing events
+
+Push events at any point after initialization:
+
+```c
+// Push an event with four optional int32 payloads (a, b, c, d)
+AudioApi_DebugPushEvent(MY_TAG_SONG_START, seqId, 0, 0, 0);
+AudioApi_DebugPushEvent(MY_TAG_VOLUME_SET, playerIndex, volumeMilli, 0, 0);
+```
+
+Events are visible in the **Events** tab of the debug UI immediately. They appear with your registered tag name alongside the four payload values. Unknown tags display as their raw decimal value.
+
+The call is a no-op when the debug server is not enabled, so event pushes in production impose no meaningful overhead.
+
 ## Configuration
 
 The mod exposes the following settings in the recomp mod settings UI:

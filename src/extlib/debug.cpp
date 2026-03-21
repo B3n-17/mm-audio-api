@@ -1,4 +1,5 @@
 #include <extlib/debug.hpp>
+#include <audio_debug_html.h>
 
 #include <algorithm>
 #include <array>
@@ -8,6 +9,7 @@
 #include <sstream>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 #include <plog/Log.h>
@@ -47,6 +49,19 @@ std::mutex sSnapshotMutex;
 
 std::atomic<bool> sEnabled = false;
 std::once_flag sHttpStartOnce;
+
+std::unordered_map<uint32_t, std::string> sTagRegistry;
+std::mutex sTagRegistryMutex;
+
+// Streamed audio state: keyed by (resourceId << 8 | trackNo)
+std::unordered_map<uint64_t, Debug::StreamState> sStreamStates;
+std::mutex sStreamMutex;
+
+// DJ mixer overrides: indexed by [playerIndex][channelIndex]
+constexpr size_t MAX_MIX_CHANNELS = 16;
+std::array<std::array<Debug::MixOverride, MAX_MIX_CHANNELS>, Debug::MAX_PLAYERS> sMixOverrides;
+std::mutex sMixMutex;
+std::atomic<bool> sMixerOpen = false;
 
 #if defined(_WIN32)
 using SocketHandle = SOCKET;
@@ -122,6 +137,7 @@ std::string snapshotJson() {
     std::ostringstream out;
     out << "{\"ts_ms\":" << snapshot.tsMs
         << ",\"init_phase\":" << snapshot.initPhase
+        << ",\"khz_mode\":" << (snapshot.khzMode ? "true" : "false")
         << ",\"main_seq_id\":" << snapshot.mainSeqId
         << ",\"sub_seq_id\":" << snapshot.subSeqId
         << ",\"fanfare_seq_id\":" << snapshot.fanfareSeqId
@@ -186,6 +202,16 @@ std::string snapshotJson() {
                 out << ',';
             }
             out << p.chVolMilli[ch];
+        }
+
+        out << "]"
+            << ",\"ch_reverb_vol\":[";
+
+        for (size_t ch = 0; ch < p.chReverbVol.size(); ch++) {
+            if (ch != 0) {
+                out << ',';
+            }
+            out << p.chReverbVol[ch];
         }
 
         out << "]"
@@ -314,8 +340,91 @@ std::string eventsJson(uint64_t sinceId, size_t limit) {
     return out.str();
 }
 
+// Parse a JSON integer field: { ..., "key": value, ... }
+// Returns defaultVal if the key is not found or the value is not a plain integer.
+static int32_t jsonInt(const std::string& body, const std::string& key, int32_t defaultVal) {
+    const std::string needle = "\"" + key + "\"";
+    size_t pos = body.find(needle);
+    if (pos == std::string::npos) {
+        return defaultVal;
+    }
+    pos += needle.size();
+    while (pos < body.size() && (body[pos] == ' ' || body[pos] == ':')) {
+        pos++;
+    }
+    if (pos >= body.size()) {
+        return defaultVal;
+    }
+    // Accept optional leading '-'
+    size_t start = pos;
+    if (body[start] == '-') {
+        start++;
+    }
+    if (start >= body.size() || !std::isdigit(static_cast<unsigned char>(body[start]))) {
+        return defaultVal;
+    }
+    try {
+        size_t eaten = 0;
+        int32_t v = static_cast<int32_t>(std::stol(body.substr(pos), &eaten));
+        (void)eaten;
+        return v;
+    } catch (...) {
+        return defaultVal;
+    }
+}
+
+std::string streamsJson() {
+    std::lock_guard<std::mutex> lock(sStreamMutex);
+    std::ostringstream out;
+    out << "{\"streams\":[";
+    bool first = true;
+    for (const auto& [key, s] : sStreamStates) {
+        if (!first) out << ',';
+        first = false;
+        out << "{\"resource_id\":" << s.resourceId
+            << ",\"track_no\":" << s.trackNo
+            << ",\"pos\":" << s.pos
+            << ",\"sample_count\":" << s.sampleCount
+            << ",\"loop_start\":" << s.loopStart
+            << ",\"loop_end\":" << s.loopEnd
+            << ",\"loop_count\":" << s.loopCount
+            << ",\"ts_ms\":" << s.tsMs
+            << "}";
+    }
+    out << "]}";
+    return out.str();
+}
+
+std::string mixOverridesJson() {
+    std::lock_guard<std::mutex> lock(sMixMutex);
+    std::ostringstream out;
+    out << "{\"overrides\":[";
+    bool first = true;
+    for (size_t p = 0; p < Debug::MAX_PLAYERS; p++) {
+        for (size_t c = 0; c < MAX_MIX_CHANNELS; c++) {
+            const auto& ov = sMixOverrides[p][c];
+            if (!ov.active) {
+                continue;
+            }
+            if (!first) {
+                out << ',';
+            }
+            first = false;
+            out << "{\"player\":" << p
+                << ",\"channel\":" << c
+                << ",\"pan\":" << ov.pan
+                << ",\"vol_milli\":" << ov.volMilli
+                << ",\"reverb\":" << ov.reverb
+                << ",\"muted\":" << (ov.muted ? "true" : "false")
+                << "}";
+        }
+    }
+    out << "]}";
+    return out.str();
+}
+
 void handleClient(SocketHandle client) {
-    char reqBuf[4096];
+    char reqBuf[8192];
     int received = recv(client, reqBuf, sizeof(reqBuf) - 1, 0);
     if (received <= 0) {
         return;
@@ -330,8 +439,72 @@ void handleClient(SocketHandle client) {
     }
 
     std::string line = request.substr(0, lineEnd);
+
+    // Handle POST /mixer-open (must be checked before POST /mix due to prefix overlap)
+    if (line.rfind("POST /mixer-open", 0) == 0) {
+        size_t bodyStart = request.find("\r\n\r\n");
+        std::string body = bodyStart != std::string::npos ? request.substr(bodyStart + 4) : "";
+        int32_t open = jsonInt(body, "open", 0);
+        Debug::setMixerOpen(open != 0);
+        sendHttp(client, "200 OK", "application/json; charset=utf-8", "{\"ok\":true}");
+        return;
+    }
+
+    // Handle POST /mix
+    if (line.rfind("POST /mix", 0) == 0) {
+        // Find body after \r\n\r\n
+        size_t bodyStart = request.find("\r\n\r\n");
+        std::string body = bodyStart != std::string::npos ? request.substr(bodyStart + 4) : "";
+
+        int32_t player  = jsonInt(body, "player",   -1);
+        int32_t channel = jsonInt(body, "channel",  -1);
+        int32_t pan     = jsonInt(body, "pan",      -1);
+        int32_t vol     = jsonInt(body, "vol_milli", -1);
+        int32_t reverb  = jsonInt(body, "reverb",   -1);
+        int32_t muted   = jsonInt(body, "muted",     0);
+        int32_t clear   = jsonInt(body, "clear",     0);
+
+        if (player < 0 || player >= static_cast<int32_t>(Debug::MAX_PLAYERS) ||
+            channel < 0 || channel >= static_cast<int32_t>(MAX_MIX_CHANNELS)) {
+            sendHttp(client, "400 Bad Request", "application/json; charset=utf-8",
+                     "{\"error\":\"player/channel out of range\"}");
+            return;
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(sMixMutex);
+            auto& ov = sMixOverrides[static_cast<size_t>(player)][static_cast<size_t>(channel)];
+            if (clear) {
+                ov = Debug::MixOverride{};
+            } else {
+                ov.active   = true;
+                ov.pan      = pan;
+                ov.volMilli = vol;
+                ov.reverb   = reverb;
+                ov.muted    = muted != 0;
+            }
+        }
+
+        sendHttp(client, "200 OK", "application/json; charset=utf-8", "{\"ok\":true}");
+        return;
+    }
+
+    // Handle OPTIONS preflight (CORS)
+    if (line.rfind("OPTIONS ", 0) == 0) {
+        std::string preflightBody;
+        std::ostringstream out;
+        out << "HTTP/1.1 204 No Content\r\n"
+            << "Access-Control-Allow-Origin: *\r\n"
+            << "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n"
+            << "Access-Control-Allow-Headers: Content-Type\r\n"
+            << "Connection: close\r\n\r\n";
+        std::string payload = out.str();
+        send(client, payload.data(), static_cast<int>(payload.size()), 0);
+        return;
+    }
+
     if (line.rfind("GET ", 0) != 0) {
-        sendHttp(client, "405 Method Not Allowed", "text/plain; charset=utf-8", "Only GET supported");
+        sendHttp(client, "405 Method Not Allowed", "text/plain; charset=utf-8", "Only GET and POST /mix supported");
         return;
     }
 
@@ -374,6 +547,21 @@ void handleClient(SocketHandle client) {
         }
 
         sendHttp(client, "200 OK", "application/json; charset=utf-8", eventsJson(sinceId, static_cast<size_t>(limit)));
+        return;
+    }
+
+    if (path == "/tags") {
+        sendHttp(client, "200 OK", "application/json; charset=utf-8", Debug::getTagsJson());
+        return;
+    }
+
+    if (path == "/mix") {
+        sendHttp(client, "200 OK", "application/json; charset=utf-8", mixOverridesJson());
+        return;
+    }
+
+    if (path == "/streams") {
+        sendHttp(client, "200 OK", "application/json; charset=utf-8", streamsJson());
         return;
     }
 
@@ -486,6 +674,11 @@ void pushEvent(uint32_t tag, int32_t a, int32_t b, int32_t c, int32_t d) {
     sEventStore.mutex.unlock();
 }
 
+void setKhzMode(bool enabled) {
+    std::lock_guard<std::mutex> lock(sSnapshotMutex);
+    sSnapshot.khzMode = enabled;
+}
+
 void setSnapshot(uint32_t initPhase, int32_t mainSeqId, int32_t subSeqId, int32_t fanfareSeqId, int32_t ambienceSeqId) {
     if (!isEnabled()) {
         return;
@@ -535,48 +728,88 @@ void setSeqPlayerPacked(uint32_t playerIndex, int32_t seqId, const int32_t* pack
         .chEnabled = {
             static_cast<uint32_t>(packed[20]), static_cast<uint32_t>(packed[21]),
             static_cast<uint32_t>(packed[22]), static_cast<uint32_t>(packed[23]),
-        },
-        .chPan = {
-            packed[24], packed[25], packed[26], packed[27],
-        },
-        .chVolMilli = {
-            packed[28], packed[29], packed[30], packed[31],
-        },
-        .layerEnabledMask = {
+            static_cast<uint32_t>(packed[24]), static_cast<uint32_t>(packed[25]),
+            static_cast<uint32_t>(packed[26]), static_cast<uint32_t>(packed[27]),
+            static_cast<uint32_t>(packed[28]), static_cast<uint32_t>(packed[29]),
+            static_cast<uint32_t>(packed[30]), static_cast<uint32_t>(packed[31]),
             static_cast<uint32_t>(packed[32]), static_cast<uint32_t>(packed[33]),
             static_cast<uint32_t>(packed[34]), static_cast<uint32_t>(packed[35]),
         },
+        .chPan = {
+            packed[36], packed[37], packed[38], packed[39],
+            packed[40], packed[41], packed[42], packed[43],
+            packed[44], packed[45], packed[46], packed[47],
+            packed[48], packed[49], packed[50], packed[51],
+        },
+        .chVolMilli = {
+            packed[52], packed[53], packed[54], packed[55],
+            packed[56], packed[57], packed[58], packed[59],
+            packed[60], packed[61], packed[62], packed[63],
+            packed[64], packed[65], packed[66], packed[67],
+        },
+        .chReverbVol = {
+            packed[68], packed[69], packed[70], packed[71],
+            packed[72], packed[73], packed[74], packed[75],
+            packed[76], packed[77], packed[78], packed[79],
+            packed[80], packed[81], packed[82], packed[83],
+        },
+        .layerEnabledMask = {
+            static_cast<uint32_t>(packed[84]),  static_cast<uint32_t>(packed[85]),
+            static_cast<uint32_t>(packed[86]),  static_cast<uint32_t>(packed[87]),
+            static_cast<uint32_t>(packed[88]),  static_cast<uint32_t>(packed[89]),
+            static_cast<uint32_t>(packed[90]),  static_cast<uint32_t>(packed[91]),
+            static_cast<uint32_t>(packed[92]),  static_cast<uint32_t>(packed[93]),
+            static_cast<uint32_t>(packed[94]),  static_cast<uint32_t>(packed[95]),
+            static_cast<uint32_t>(packed[96]),  static_cast<uint32_t>(packed[97]),
+            static_cast<uint32_t>(packed[98]),  static_cast<uint32_t>(packed[99]),
+        },
         .layerPan = {
-            packed[36], packed[37], packed[38], packed[39], packed[40], packed[41], packed[42], packed[43],
-            packed[44], packed[45], packed[46], packed[47], packed[48], packed[49], packed[50], packed[51],
+            packed[100], packed[101], packed[102], packed[103],
+            packed[104], packed[105], packed[106], packed[107],
+            packed[108], packed[109], packed[110], packed[111],
+            packed[112], packed[113], packed[114], packed[115],
         },
         .layerNotePan = {
-            packed[52], packed[53], packed[54], packed[55], packed[56], packed[57], packed[58], packed[59],
-            packed[60], packed[61], packed[62], packed[63], packed[64], packed[65], packed[66], packed[67],
+            packed[116], packed[117], packed[118], packed[119],
+            packed[120], packed[121], packed[122], packed[123],
+            packed[124], packed[125], packed[126], packed[127],
+            packed[128], packed[129], packed[130], packed[131],
         },
         .layerNoteAttrPan = {
-            packed[68], packed[69], packed[70], packed[71], packed[72], packed[73], packed[74], packed[75],
-            packed[76], packed[77], packed[78], packed[79], packed[80], packed[81], packed[82], packed[83],
+            packed[132], packed[133], packed[134], packed[135],
+            packed[136], packed[137], packed[138], packed[139],
+            packed[140], packed[141], packed[142], packed[143],
+            packed[144], packed[145], packed[146], packed[147],
         },
         .layerNoteTargetL = {
-            packed[84], packed[85], packed[86], packed[87], packed[88], packed[89], packed[90], packed[91],
-            packed[92], packed[93], packed[94], packed[95], packed[96], packed[97], packed[98], packed[99],
+            packed[148], packed[149], packed[150], packed[151],
+            packed[152], packed[153], packed[154], packed[155],
+            packed[156], packed[157], packed[158], packed[159],
+            packed[160], packed[161], packed[162], packed[163],
         },
         .layerNoteTargetR = {
-            packed[100], packed[101], packed[102], packed[103], packed[104], packed[105], packed[106], packed[107],
-            packed[108], packed[109], packed[110], packed[111], packed[112], packed[113], packed[114], packed[115],
+            packed[164], packed[165], packed[166], packed[167],
+            packed[168], packed[169], packed[170], packed[171],
+            packed[172], packed[173], packed[174], packed[175],
+            packed[176], packed[177], packed[178], packed[179],
         },
         .layerNoteCurL = {
-            packed[116], packed[117], packed[118], packed[119], packed[120], packed[121], packed[122], packed[123],
-            packed[124], packed[125], packed[126], packed[127], packed[128], packed[129], packed[130], packed[131],
+            packed[180], packed[181], packed[182], packed[183],
+            packed[184], packed[185], packed[186], packed[187],
+            packed[188], packed[189], packed[190], packed[191],
+            packed[192], packed[193], packed[194], packed[195],
         },
         .layerNoteCurR = {
-            packed[132], packed[133], packed[134], packed[135], packed[136], packed[137], packed[138], packed[139],
-            packed[140], packed[141], packed[142], packed[143], packed[144], packed[145], packed[146], packed[147],
+            packed[196], packed[197], packed[198], packed[199],
+            packed[200], packed[201], packed[202], packed[203],
+            packed[204], packed[205], packed[206], packed[207],
+            packed[208], packed[209], packed[210], packed[211],
         },
         .layerSampleMediumCodec = {
-            packed[148], packed[149], packed[150], packed[151], packed[152], packed[153], packed[154], packed[155],
-            packed[156], packed[157], packed[158], packed[159], packed[160], packed[161], packed[162], packed[163],
+            packed[212], packed[213], packed[214], packed[215],
+            packed[216], packed[217], packed[218], packed[219],
+            packed[220], packed[221], packed[222], packed[223],
+            packed[224], packed[225], packed[226], packed[227],
         },
     };
 
@@ -625,245 +858,103 @@ void startHttpServer() {
     setEnabled(true);
 }
 
-std::string buildAudioDebugHtml() {
-    return R"HTML(<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Audio API Debug</title>
-  <style>
-    :root {
-      --bg0: #0f1a22;
-      --bg1: #152737;
-      --card: #10212fdd;
-      --line: #2a4b61;
-      --text: #dff1ff;
-      --muted: #9bbad0;
-      --accent: #55d6be;
-      --warn: #ffbe5c;
-      --bad: #ff6a6a;
-      --mono: "JetBrains Mono", "Cascadia Mono", "SFMono-Regular", Menlo, monospace;
-      --sans: "IBM Plex Sans", "Segoe UI", sans-serif;
+void registerTag(uint32_t tag, const char* name) {
+    if (!name || tag == 0) {
+        return;
     }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      font-family: var(--sans);
-      color: var(--text);
-      background: radial-gradient(1200px 500px at 10% 0%, #244660, transparent), linear-gradient(160deg, var(--bg0), var(--bg1));
-      min-height: 100vh;
-    }
-    .wrap { max-width: 1200px; margin: 0 auto; padding: 20px; }
-    h1 { margin: 0 0 12px; font-size: 24px; letter-spacing: 0.02em; }
-    .status {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-      gap: 10px;
-      margin-bottom: 14px;
-    }
-    .card {
-      background: var(--card);
-      border: 1px solid var(--line);
-      border-radius: 10px;
-      padding: 10px 12px;
-      backdrop-filter: blur(3px);
-    }
-    .k { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.07em; }
-    .v { font-family: var(--mono); font-size: 18px; margin-top: 4px; }
-    .good { color: var(--accent); }
-    .warn { color: var(--warn); }
-    .bad { color: var(--bad); }
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      font-family: var(--mono);
-      font-size: 12px;
-    }
-    th, td { padding: 7px 8px; border-bottom: 1px solid #1f3b50; text-align: left; }
-    th { color: var(--muted); font-weight: 600; }
-    .grid { display: grid; grid-template-columns: 1fr; gap: 12px; }
-    @media (min-width: 980px) { .grid { grid-template-columns: 1fr 1fr; } }
-    .events { max-height: 420px; overflow: auto; }
-    .pill { display: inline-block; border: 1px solid var(--line); border-radius: 999px; padding: 2px 8px; font-size: 11px; color: var(--muted); }
-    .chviz { min-width: 280px; display: grid; gap: 3px; }
-    .chrow { display: grid; grid-template-columns: 26px 1fr 52px; align-items: center; gap: 6px; }
-    .chid { color: var(--muted); font-size: 11px; }
-    .pantrack { position: relative; height: 8px; border-radius: 999px; background: #1b3548; border: 1px solid #2a4b61; }
-    .pancenter { position: absolute; left: 50%; top: -1px; bottom: -1px; width: 1px; background: #88a7bd; opacity: 0.8; }
-    .panpos { position: absolute; top: 0; bottom: 0; width: 2px; background: #7fe3d1; }
-    .voltxt { font-size: 11px; color: var(--text); text-align: right; }
-    .is-off .pantrack { opacity: 0.35; }
-    .is-off .voltxt { color: var(--muted); }
-  </style>
-</head>
-<body>
-  <div class="wrap">
-    <h1>Audio API Live Debug</h1>
-    <div class="status">
-      <div class="card"><div class="k">Connection</div><div id="conn" class="v">connecting...</div></div>
-      <div class="card"><div class="k">Init Phase</div><div id="phase" class="v">-</div></div>
-      <div class="card"><div class="k">Last Event ID</div><div id="lastId" class="v">0</div></div>
-      <div class="card"><div class="k">Dropped Events</div><div id="dropped" class="v">0</div></div>
-      <div class="card"><div class="k">Main/Sub/Fanfare</div><div id="quickSeq" class="v">-</div></div>
-    </div>
+    std::lock_guard<std::mutex> lock(sTagRegistryMutex);
+    sTagRegistry[tag] = name;
+}
 
-    <div class="grid">
-      <div class="card">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-          <span class="pill">/snapshot</span>
-          <span id="snapTs" class="k">ts: -</span>
-        </div>
-        <table>
-          <thead><tr><th>Player</th><th>Role</th><th>SeqId</th><th>En</th><th>Ch</th><th>Pan L/C/R(avg)</th><th>Notes A/D/R</th><th>Ch0..3 pan@vol</th><th>L0..3 pan/notePan</th><th>L0..3 tgtLR/curLR</th><th>Seq IO</th></tr></thead>
-          <tbody id="players"></tbody>
-        </table>
-      </div>
-
-      <div class="card">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-          <span class="pill">/events</span>
-          <span class="k">latest first</span>
-        </div>
-        <div class="events">
-          <table>
-            <thead><tr><th>ID</th><th>Tag</th><th>a</th><th>b</th><th>c</th><th>d</th><th>ts(ms)</th></tr></thead>
-            <tbody id="events"></tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <script>
-    const tags = {
-      1: 'QUEUE_EXT_CMD',
-      2: 'PROCESS_SEQ_CMD',
-      3: 'START_SEQUENCE',
-      4: 'STOP_SEQUENCE',
-      5: 'PLAY_SCENE_SEQUENCE',
-      6: 'PLAY_SUB_BGM',
-      7: 'PLAY_FANFARE',
-      8: 'PLAY_OBJ_BGM',
-      9: 'PLAY_CUTSCENE_SEQUENCE',
-      10: 'START_MORNING_SEQUENCE',
-      11: 'BGM_BLEND_INTENT',
-      12: 'SEQ_IO_CHANGE',
-      13: 'MUTE_ALL_EXCEPT_SYS_OCA',
-      14: 'SET_SFX_VOL_EXCEPT',
-      15: 'SFX_VOL_TRANSITION',
-      16: 'MUTE_SFX_AMBIENCE_ONLY',
-      17: 'START_SFX_PLAYER',
-      18: 'MUTE_SFX_AMBIENCE_SYS_OCA',
-      19: 'SET_SPEC',
-      20: 'RESET_HEAP_STEP3',
-      21: 'SFX_MUTE_BANKS_BEFORE',
-      22: 'SFX_MUTE_BANKS_AFTER',
-      23: 'SFX_BANK_MASK',
-    };
-
-    let since = 0;
-    const eventRows = [];
-
-    async function j(url) {
-      const res = await fetch(url, { cache: 'no-store' });
-      if (!res.ok) throw new Error(url + ' ' + res.status);
-      return res.json();
-    }
-
-    function setConn(ok) {
-      const el = document.getElementById('conn');
-      el.textContent = ok ? 'online' : 'offline';
-      el.className = 'v ' + (ok ? 'good' : 'bad');
-    }
-
-    function renderEvents() {
-      const tbody = document.getElementById('events');
-      tbody.innerHTML = eventRows.slice(-400).reverse().map(e =>
-        `<tr><td>${e.id}</td><td>${tags[e.tag] || e.tag}</td><td>${e.a}</td><td>${e.b}</td><td>${e.c}</td><td>${e.d}</td><td>${e.ts_ms}</td></tr>`
-      ).join('');
-    }
-
-    function renderPlayers(snapshot) {
-      const tbody = document.getElementById('players');
-      tbody.innerHTML = snapshot.players.map(p => {
-        const io = (p.seq_io || []).join('/');
-        const pan = `${p.pan_left_count}/${p.pan_center_count}/${p.pan_right_count} (${p.pan_average})`;
-        const notes = `${p.notes_active}/${p.notes_decaying}/${p.notes_releasing}`;
-        const chPan = p.ch_pan || [];
-        const chVol = p.ch_vol_milli || [];
-        const chEn = p.ch_enabled || [];
-        const layerPan = p.layer_pan || [];
-        const layerNotePan = p.layer_note_pan || [];
-        const noteTL = p.layer_note_target_l || [];
-        const noteTR = p.layer_note_target_r || [];
-        const noteCL = p.layer_note_cur_l || [];
-        const noteCR = p.layer_note_cur_r || [];
-        const first4 = [0, 1, 2, 3].map(i => {
-          const enabled = !!chEn[i];
-          const panValue = Number.isFinite(chPan[i]) ? chPan[i] : -1;
-          const vol = (Number.isFinite(chVol[i]) ? chVol[i] : 0) / 1000;
-          const panPct = panValue < 0 ? 50 : Math.max(0, Math.min(127, panValue)) / 127 * 100;
-          return `<div class="chrow ${enabled ? '' : 'is-off'}"><div class="chid">ch${i}</div><div class="pantrack"><span class="pancenter"></span><span class="panpos" style="left:${panPct}%"></span></div><div class="voltxt">${enabled ? vol.toFixed(2) : '-'}</div></div>`;
-        }).join('');
-        const layers = [0, 1, 2, 3].map(ch => {
-          const base = ch * 4;
-          const row = [0, 1, 2, 3].map(l => {
-            const lp = layerPan[base + l];
-            const lnp = layerNotePan[base + l];
-            return lp < 0 ? '-' : `${lp}/${lnp}`;
-          }).join(' ');
-          return `<div class="chrow"><div class="chid">ch${ch}</div><div style="grid-column: span 2; font-size:11px; color:var(--muted)">${row}</div></div>`;
-        }).join('');
-        const vols = [0, 1, 2, 3].map(ch => {
-          const base = ch * 4;
-          const row = [0, 1, 2, 3].map(l => {
-            const tl = noteTL[base + l];
-            const tr = noteTR[base + l];
-            const cl = noteCL[base + l];
-            const cr = noteCR[base + l];
-            return tl < 0 ? '-' : `${tl}/${tr}|${cl}/${cr}`;
-          }).join(' ');
-          return `<div class="chrow"><div class="chid">ch${ch}</div><div style="grid-column: span 2; font-size:11px; color:var(--muted)">${row}</div></div>`;
-        }).join('');
-        return `<tr><td>${p.player}</td><td>${p.role}</td><td>${p.seq_id}</td><td>${p.enabled}</td><td>${p.active_channel_count}</td><td>${pan}</td><td>${notes}</td><td><div class="chviz">${first4}</div></td><td><div class="chviz">${layers}</div></td><td><div class="chviz">${vols}</div></td><td>${io}</td></tr>`;
-      }).join('');
-    }
-
-    async function tick() {
-      try {
-        const [snapshot, events] = await Promise.all([
-          j('/snapshot'),
-          j('/events?since=' + since + '&limit=300')
-        ]);
-
-        setConn(true);
-
-        document.getElementById('phase').textContent = snapshot.init_phase;
-        document.getElementById('snapTs').textContent = 'ts: ' + snapshot.ts_ms;
-        document.getElementById('quickSeq').textContent = `${snapshot.main_seq_id} / ${snapshot.sub_seq_id} / ${snapshot.fanfare_seq_id}`;
-        document.getElementById('lastId').textContent = events.last_event_id;
-        document.getElementById('dropped').textContent = events.dropped_total;
-        document.getElementById('dropped').className = 'v ' + (events.dropped_total > 0 ? 'warn' : 'good');
-
-        renderPlayers(snapshot);
-
-        if (events.events.length) {
-          since = events.events[events.events.length - 1].id;
-          eventRows.push(...events.events);
-          if (eventRows.length > 3000) eventRows.splice(0, eventRows.length - 3000);
-          renderEvents();
+std::string getTagsJson() {
+    std::lock_guard<std::mutex> lock(sTagRegistryMutex);
+    std::ostringstream out;
+    out << "{\"tags\":{";
+    bool first = true;
+    for (const auto& [tag, name] : sTagRegistry) {
+        if (!first) {
+            out << ',';
         }
-      } catch (err) {
-        setConn(false);
-      }
+        first = false;
+        // Escape the name string
+        out << '"' << tag << "\":\"";
+        for (char ch : name) {
+            if (ch == '"' || ch == '\\') out << '\\';
+            out << ch;
+        }
+        out << '"';
     }
+    out << "}}";
+    return out.str();
+}
 
-    setInterval(tick, 300);
-    tick();
-  </script>
-</body>
-</html>)HTML";
+void setStreamState(uint32_t resourceId, uint32_t trackNo, int32_t pos,
+                    uint32_t sampleCount, uint32_t loopStart, uint32_t loopEnd, int32_t loopCount) {
+    if (!isEnabled()) {
+        return;
+    }
+    uint64_t key = (static_cast<uint64_t>(resourceId) << 8) | (trackNo & 0xFF);
+    std::lock_guard<std::mutex> lock(sStreamMutex);
+    sStreamStates[key] = StreamState {
+        resourceId, trackNo, pos, sampleCount, loopStart, loopEnd, loopCount, nowMs()
+    };
+}
+
+std::string getStreamsJson() {
+    return streamsJson();
+}
+
+std::string buildAudioDebugHtml() {
+    return kAudioDebugHtml;
+}
+
+void setMixerOpen(bool open) {
+    if (!open) {
+        // Clear all overrides so the game stops applying them immediately.
+        std::lock_guard<std::mutex> lock(sMixMutex);
+        for (auto& player : sMixOverrides) {
+            for (auto& ov : player) {
+                ov = MixOverride{};
+            }
+        }
+    }
+    sMixerOpen.store(open, std::memory_order_release);
+}
+
+bool isMixerOpen() {
+    return sMixerOpen.load(std::memory_order_acquire);
+}
+
+void setMixOverride(uint32_t playerIndex, uint32_t channelIndex, int32_t pan, int32_t volMilli, int32_t reverb, bool muted) {
+    if (playerIndex >= MAX_PLAYERS || channelIndex >= MAX_MIX_CHANNELS) {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(sMixMutex);
+    auto& ov = sMixOverrides[playerIndex][channelIndex];
+    ov.active   = true;
+    ov.pan      = pan;
+    ov.volMilli = volMilli;
+    ov.reverb   = reverb;
+    ov.muted    = muted;
+}
+
+void clearMixOverride(uint32_t playerIndex, uint32_t channelIndex) {
+    if (playerIndex >= MAX_PLAYERS || channelIndex >= MAX_MIX_CHANNELS) {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(sMixMutex);
+    sMixOverrides[playerIndex][channelIndex] = MixOverride{};
+}
+
+MixOverride getMixOverride(uint32_t playerIndex, uint32_t channelIndex) {
+    if (!sMixerOpen.load(std::memory_order_acquire)) {
+        return MixOverride{};
+    }
+    if (playerIndex >= MAX_PLAYERS || channelIndex >= MAX_MIX_CHANNELS) {
+        return MixOverride{};
+    }
+    std::lock_guard<std::mutex> lock(sMixMutex);
+    return sMixOverrides[playerIndex][channelIndex];
 }
 
 } // namespace Debug

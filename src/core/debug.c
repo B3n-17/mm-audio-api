@@ -23,22 +23,32 @@ static s32 AudioApi_DebugNormalizePan(s32 pan) {
 }
 
 RECOMP_IMPORT(".", bool AudioApiNative_DebugSetEnabled(u32 enabled));
+RECOMP_IMPORT(".", bool AudioApiNative_DebugSetKhzMode(u32 enabled));
 RECOMP_IMPORT(".", bool AudioApiNative_DebugSetSnapshot(u32 initPhase, s32 mainSeqId, s32 subSeqId,
                                                          s32* snapshotTail));
 RECOMP_IMPORT(".", bool AudioApiNative_DebugSetSeqPlayer(u32 playerIndex, s32 seqId, s32* playerState));
 RECOMP_IMPORT(".", bool AudioApiNative_DebugEvent(u32 tag, s32 a, s32 b, s32* extra));
 
+// Returns mix override for the given player/channel.
+// out[0] = pan (0-127, or -1 = no override), out[1] = vol_milli (0-1000, or -1 = no override),
+// out[2] = muted (0 or 1). Returns false when the debug server is not enabled.
+RECOMP_IMPORT(".", bool AudioApiNative_DebugGetMixOverride(u32 playerIndex, u32 channelIndex, s32* out));
+
 void AudioApi_DebugInitFromConfig(void) {
     gAudioApiDebugHttpEnabled = recomp_get_config_u32("audio_debug_http") != 0;
     gAudioApiDebugVerbose = recomp_get_config_u32("audio_debug_verbose") != 0;
     AudioApiNative_DebugSetEnabled(gAudioApiDebugHttpEnabled);
+    AudioApiNative_DebugSetKhzMode((u32)gAudioApi48kHzEnabled);
 }
 
 void AudioApi_DebugSyncSnapshot(void) {
     u32 i;
     u32 j;
+    u32 pi;
+    u32 ci;
+    s32 mixOut[4];
     s32 snapshotTail[2];
-    s32 playerState[164];
+    s32 playerState[228];
     SequencePlayer* seqPlayer;
     SequenceChannel* channel;
     SequenceLayer* layer;
@@ -161,36 +171,45 @@ void AudioApi_DebugSyncSnapshot(void) {
             }
         }
 
-        for (j = 0; j < 4; j++) {
+        // ch fields: [20..35] chEnabled, [36..51] chPan, [52..67] chVolMilli, [68..83] chReverbVol
+        for (j = 0; j < SEQ_NUM_CHANNELS; j++) {
             channel = seqPlayer->channels[j];
             if (channel == NULL || !IS_SEQUENCE_CHANNEL_VALID(channel)) {
                 playerState[20 + j] = 0;
-                playerState[24 + j] = -1;
-                playerState[28 + j] = 0;
+                playerState[36 + j] = -1;
+                playerState[52 + j] = 0;
+                playerState[68 + j] = 0;
                 continue;
             }
 
             playerState[20 + j] = channel->enabled;
-            playerState[24 + j] = AudioApi_DebugNormalizePan(channel->pan);
-            playerState[28 + j] = channel->volume * 1000.0f;
+            playerState[36 + j] = AudioApi_DebugNormalizePan(channel->pan);
+            playerState[52 + j] = channel->volume * 1000.0f;
+            playerState[68 + j] = channel->targetReverbVol;
         }
 
-        for (j = 0; j < 4; j++) {
-            playerState[32 + j] = 0;
+        // layer fields: [84..99] layerEnabledMask, [100..115] layerPan,
+        // [116..131] layerNotePan, [132..147] layerNoteAttrPan,
+        // [148..163] layerNoteTargetL, [164..179] layerNoteTargetR,
+        // [180..195] layerNoteCurL, [196..211] layerNoteCurR,
+        // [212..227] layerSampleMediumCodec
+        for (j = 0; j < SEQ_NUM_CHANNELS; j++) {
+            playerState[84 + j] = 0;
         }
 
         for (j = 0; j < 16; j++) {
-            playerState[36 + j] = -1;
-            playerState[52 + j] = -1;
-            playerState[68 + j] = -1;
-            playerState[84 + j] = -1;
             playerState[100 + j] = -1;
             playerState[116 + j] = -1;
             playerState[132 + j] = -1;
             playerState[148 + j] = -1;
+            playerState[164 + j] = -1;
+            playerState[180 + j] = -1;
+            playerState[196 + j] = -1;
+            playerState[212 + j] = -1;
         }
 
-        for (j = 0; j < 4; j++) {
+        // Layer arrays have 16 entries — one slot per channel (first active layer wins).
+        for (j = 0; j < SEQ_NUM_CHANNELS; j++) {
             u32 k;
 
             channel = seqPlayer->channels[j];
@@ -205,32 +224,73 @@ void AudioApi_DebugSyncSnapshot(void) {
                 }
 
                 if (layer->enabled) {
-                    playerState[32 + j] |= (1 << k);
+                    playerState[84 + j] |= (1 << k);
                 }
 
-                playerState[36 + (j * 4) + k] = layer->pan;
-                playerState[52 + (j * 4) + k] = layer->notePan;
+                // Only write layer detail for the first active layer on this channel.
+                if (playerState[100 + j] == -1) {
+                    playerState[100 + j] = layer->pan;
+                    playerState[116 + j] = layer->notePan;
 
-                note = layer->note;
-                if (note == NULL) {
-                    continue;
-                }
+                    note = layer->note;
+                    if (note != NULL) {
+                        playerState[132 + j] = note->playbackState.attributes.pan;
+                        playerState[148 + j] = note->sampleState.targetVolLeft;
+                        playerState[164 + j] = note->sampleState.targetVolRight;
+                        playerState[180 + j] = note->synthesisState.curVolLeft;
+                        playerState[196 + j] = note->synthesisState.curVolRight;
 
-                playerState[68 + (j * 4) + k] = note->playbackState.attributes.pan;
-                playerState[84 + (j * 4) + k] = note->sampleState.targetVolLeft;
-                playerState[100 + (j * 4) + k] = note->sampleState.targetVolRight;
-                playerState[116 + (j * 4) + k] = note->synthesisState.curVolLeft;
-                playerState[132 + (j * 4) + k] = note->synthesisState.curVolRight;
-
-                if (!note->sampleState.bitField1.isSyntheticWave && note->sampleState.tunedSample != NULL &&
-                    note->sampleState.tunedSample->sample != NULL) {
-                    Sample* sample = note->sampleState.tunedSample->sample;
-                    playerState[148 + (j * 4) + k] = ((sample->medium & 0xFF) << 8) | (sample->codec & 0xFF);
+                        if (!note->sampleState.bitField1.isSyntheticWave &&
+                            note->sampleState.tunedSample != NULL &&
+                            note->sampleState.tunedSample->sample != NULL) {
+                            Sample* sample = note->sampleState.tunedSample->sample;
+                            playerState[212 + j] = ((sample->medium & 0xFF) << 8) | (sample->codec & 0xFF);
+                        }
+                    }
                 }
             }
         }
 
         AudioApiNative_DebugSetSeqPlayer(i, gExtActiveSeqs[i].seqId, playerState);
+    }
+
+    // Apply DJ mixer overrides: write pan/volume back to live channel state so the
+    // audio engine picks them up on the next synthesis pass.
+    if (gAudioApiDebugHttpEnabled) {
+        for (pi = 0; pi < (u32)SEQ_PLAYER_MAX; pi++) {
+            seqPlayer = &gAudioCtx.seqPlayers[pi];
+            for (ci = 0; ci < (u32)SEQ_NUM_CHANNELS; ci++) {
+                channel = seqPlayer->channels[ci];
+                if (channel == NULL || !IS_SEQUENCE_CHANNEL_VALID(channel)) {
+                    continue;
+                }
+
+                if (!AudioApiNative_DebugGetMixOverride(pi, ci, mixOut)) {
+                    goto done_mix_overrides; // debug disabled
+                }
+
+                // mixOut[0] = pan (-1 = passthrough), mixOut[1] = vol_milli (-1 = passthrough),
+                // mixOut[2] = muted, mixOut[3] = reverb (0-127, -1 = passthrough)
+                if (mixOut[2]) {
+                    // Muted: silence the channel volume
+                    channel->volume = 0.0f;
+                    channel->changes.s.volume = true;
+                } else {
+                    if (mixOut[1] >= 0) {
+                        channel->volume = (f32)mixOut[1] / 1000.0f;
+                        channel->changes.s.volume = true;
+                    }
+                    if (mixOut[0] >= 0) {
+                        channel->newPan = (u8)mixOut[0];
+                        channel->changes.s.pan = true;
+                    }
+                }
+                if (mixOut[3] >= 0) {
+                    channel->targetReverbVol = (u8)mixOut[3];
+                }
+            }
+        }
+        done_mix_overrides:;
     }
 }
 

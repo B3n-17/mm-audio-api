@@ -15,5 +15,6 @@ void* AudioApi_RspCacheAlloc(void* addr, size_t size, size_t offset);
 void* AudioApi_RspCacheMemcpy(void* addr, size_t size);
 void AudioApi_RspCacheInvalidateLastEntry();
 void AudioApi_RspCacheInvalidateAddr(void* addr, size_t size);
+void AudioApi_RspCacheInvalidateDevAddr(uintptr_t devAddr);
 
 #endif

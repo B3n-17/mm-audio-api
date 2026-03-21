@@ -414,8 +414,8 @@ RECOMP_EXPORT s32 AudioApi_CreateStreamedFanfareEx(AudioApiFileInfo2* info2, cha
     }
 
     /* Fanfares play once by default — ignore loop metadata from the file.
-     * Only loop if seqIO requires it (e.g. Bremen March needs infinite playback). */
-    if (seqIO == AUDIOAPI_SEQ_IO_BREMEN) {
+     * Exception: Bremen and Kamaro both need infinite loop for continuous playback. */
+    if (seqIO == AUDIOAPI_SEQ_IO_BREMEN || seqIO == AUDIOAPI_SEQ_IO_KAMARO || seqIO == AUDIOAPI_SEQ_IO_KEATON) {
         info.loopCount = -1;
     } else {
         info.loopCount = 0;
@@ -432,7 +432,11 @@ RECOMP_EXPORT s32 AudioApi_CreateStreamedFanfareEx(AudioApiFileInfo2* info2, cha
         AudioApi_SetWindfishReplacementSeqId(seqId);
     }
 
-    AudioApi_SetSequenceFlags(seqId, SEQ_FLAG_FANFARE);
+    if (seqIO == AUDIOAPI_SEQ_IO_KAMARO) {
+        AudioApi_SetSequenceFlags(seqId, SEQ_FLAG_FANFARE_KAMARO);
+    } else {
+        AudioApi_SetSequenceFlags(seqId, SEQ_FLAG_FANFARE);
+    }
 
     return seqId;
 }
