@@ -175,6 +175,225 @@ RECOMP_DLL_FUNC(AudioApiNative_DebugGetMixOverride) {
     RECOMP_RETURN(bool, true);
 }
 
+// Query for a pending sample patch without consuming it.
+// Returns false if no patch is pending.
+// Writes an 88-byte header to out_ptr (must be allocated by caller in rdram):
+//   [0]  s32  fontId
+//   [4]  s32  instId       (-1 = not instrument)
+//   [8]  s32  drumId       (-1 = not drum)
+//   [12] s32  sfxId        (-1 = not sfx)
+//   [16] u8   pitchRegion  (0=low,1=normal,2=high)
+//   [17] u8   pad[3]
+//   [20] f32  tuning
+//   [24] u32  numSamples
+//   [28] u32  sampleDataSize (bytes)
+//   [32] u32  codec
+//   [36] s32  bookOrder
+//   [40] s32  bookNumPredictors
+//   [44] u32  bookCoeffCount  (number of s16 entries = 8 * order * numPred)
+//   [48] u32  loopStart
+//   [52] u32  loopEnd
+//   [56] s32  loopCount
+//   [60] s16  loopPredictorState[16]   (32 bytes)
+RECOMP_DLL_FUNC(AudioApiNative_DebugQuerySamplePatch) {
+    if (!Debug::isEnabled() || !Debug::hasSamplePatch()) {
+        RECOMP_RETURN(bool, false);
+    }
+
+    // Peek without consuming.
+    auto patch = Debug::peekSamplePatch();
+    if (!patch.has_value()) {
+        RECOMP_RETURN(bool, false);
+    }
+    const auto& p = patch.value();
+
+    auto outPtr = RECOMP_ARG(int32_t, 0);
+    auto* hdr = TO_PTR(uint8_t, outPtr);
+
+    // RDRAM byte-swap rules (recomp N64 big-endian in host little-endian RDRAM):
+    //   s32/u32/f32 (4-byte, 4-byte-aligned): no XOR — MEM_W reads straight *(int32_t*)
+    //   s16/u16     (2-byte): host offset = logical_offset ^ 2  — MEM_H uses ^ 2
+    //   s8/u8       (1-byte): host offset = logical_offset ^ 3  — MEM_B uses ^ 3
+    auto writeS32 = [&](int offset, int32_t v)  { std::memcpy(hdr + offset, &v, 4); };
+    auto writeU32 = [&](int offset, uint32_t v) { std::memcpy(hdr + offset, &v, 4); };
+    auto writeF32 = [&](int offset, float v)    { std::memcpy(hdr + offset, &v, 4); };
+    auto writeS16 = [&](int offset, int16_t v) {
+        uint16_t u = static_cast<uint16_t>(v);
+        hdr[offset]     = static_cast<uint8_t>(u >> 8);
+        hdr[offset + 1] = static_cast<uint8_t>(u & 0xFF);
+    };
+    auto writeU8  = [&](int offset, uint8_t v)  { hdr[offset ^ 3] = v; };
+
+    writeS32( 0, p.fontId);
+    writeS32( 4, p.instId);
+    writeS32( 8, p.drumId);
+    writeS32(12, p.sfxId);
+    writeU8 (16, p.pitchRegion);  // u8 pitchRegion at offset 0x10, pad[3] at 0x11-0x13
+    writeU8 (17, 0); writeU8(18, 0); writeU8(19, 0);
+    writeF32(20, p.tuning);
+    writeU32(24, p.numSamples);
+    writeU32(28, static_cast<uint32_t>(p.adpcmData.size()));
+    writeU32(32, p.codec);
+    writeS32(36, p.bookOrder);
+    writeS32(40, p.bookNumPredictors);
+    writeU32(44, static_cast<uint32_t>(p.bookCoeffs.size()));
+    writeU32(48, p.loopStart);
+    writeU32(52, p.loopEnd);
+    writeS32(56, p.loopCount);
+    for (int i = 0; i < 16; i++) writeS16(60 + i * 2, p.loopPredictorState[i]);
+
+    RECOMP_RETURN(bool, true);
+}
+
+// Consume the pending patch.
+// arg0 = pointer to book coeffs buffer (s16[], size = bookCoeffCount * 2 bytes)
+// arg1 = pointer to adpcm data buffer  (u8[], size = adpcmSize bytes)
+// Both buffers must be pre-allocated by the caller (using adpcmSize/bookCoeffCount from QuerySamplePatch).
+// Returns true and clears the pending patch.
+RECOMP_DLL_FUNC(AudioApiNative_DebugTakeSamplePatch) {
+    if (!Debug::isEnabled()) {
+        RECOMP_RETURN(bool, false);
+    }
+
+    auto patch = Debug::takeSamplePatch();
+    if (!patch.has_value()) {
+        RECOMP_RETURN(bool, false);
+    }
+    const auto& p = patch.value();
+
+    auto bookPtr = RECOMP_ARG(int32_t, 0);
+    auto adpcmPtr = RECOMP_ARG(int32_t, 1);
+
+    if (bookPtr != 0 && !p.bookCoeffs.empty()) {
+        // The RSP reads the codebook via DMA as big-endian s16 values.
+        auto* dst = TO_PTR(uint8_t, bookPtr);
+        for (size_t i = 0; i < p.bookCoeffs.size(); i++) {
+            uint16_t v = static_cast<uint16_t>(p.bookCoeffs[i]);
+            dst[i * 2 + 0] = static_cast<uint8_t>(v >> 8);
+            dst[i * 2 + 1] = static_cast<uint8_t>(v & 0xFF);
+        }
+    }
+
+    if (adpcmPtr != 0 && !p.adpcmData.empty()) {
+        // ADPCM data is read by the RSP via DMA (AudioApi_Dma_Mod → memcpy), not via MEM_B,
+        // so it must be stored in natural byte order without XOR swapping.
+        auto* dst = TO_PTR(uint8_t, adpcmPtr);
+        std::memcpy(dst, p.adpcmData.data(), p.adpcmData.size());
+    }
+
+    RECOMP_RETURN(bool, true);
+}
+
+RECOMP_DLL_FUNC(AudioApiNative_DebugPushSoundFontInfos) {
+    // arr layout (see debug.c for full spec):
+    //   [0]                   = numPlayers
+    //   [1..numPlayers]       = defaultFont per player
+    //   [numPlayers+1]        = numFonts
+    //   per font:
+    //     [numInst, numDrums, numSfx,
+    //      per-inst: regionMask, loTuning, midTuning, hiTuning,
+    //      drumTunings..., sfxTunings...]
+    auto arrPtr    = RECOMP_ARG(int32_t, 0);
+    auto totalInts = RECOMP_ARG(uint32_t, 1);
+
+    if (arrPtr == 0 || totalInts < 2) {
+        RECOMP_RETURN(bool, false);
+    }
+
+    auto* arr = TO_PTR(int32_t, arrPtr);
+    uint32_t idx = 0;
+
+    int32_t numPlayers = arr[idx++];
+    if (numPlayers < 0 || (uint32_t)numPlayers > totalInts) {
+        RECOMP_RETURN(bool, false);
+    }
+
+    // Active fonts per player.
+    std::ostringstream json;
+    json << "{\"activeFonts\":[";
+    for (int32_t p = 0; p < numPlayers; p++) {
+        if (p != 0) json << ',';
+        json << arr[idx++];
+    }
+    json << "],\"fonts\":[";
+
+    if (idx >= totalInts) {
+        json << "]}";
+        Debug::updateSoundFontInfos(json.str());
+        RECOMP_RETURN(bool, true);
+    }
+
+    int32_t numFonts = arr[idx++];
+    for (int32_t i = 0; i < numFonts; i++) {
+        if (idx + 3 > totalInts) break;
+        int32_t numInst = arr[idx++];
+        int32_t numDrum = arr[idx++];
+        int32_t numSfx  = arr[idx++];
+        std::vector<int32_t> instRegions;
+        std::vector<int32_t> instTuningsLo;
+        std::vector<int32_t> instTuningsMid;
+        std::vector<int32_t> instTuningsHi;
+
+        instRegions.reserve(numInst);
+        instTuningsLo.reserve(numInst);
+        instTuningsMid.reserve(numInst);
+        instTuningsHi.reserve(numInst);
+
+        for (int32_t j = 0; j < numInst; j++) {
+            instRegions.push_back((idx < totalInts) ? arr[idx++] : 0);
+            instTuningsLo.push_back((idx < totalInts) ? arr[idx++] : 0);
+            instTuningsMid.push_back((idx < totalInts) ? arr[idx++] : 0);
+            instTuningsHi.push_back((idx < totalInts) ? arr[idx++] : 0);
+        }
+
+        if (i != 0) json << ',';
+        json << "{\"id\":" << i
+             << ",\"numInstruments\":" << numInst
+             << ",\"numDrums\":" << numDrum
+             << ",\"numSfx\":" << numSfx
+             << ",\"instRegions\":[";
+        for (int32_t j = 0; j < numInst; j++) {
+            if (j != 0) json << ',';
+            json << instRegions[j];
+        }
+        json << "]"
+             << ",\"instTuningsLo\":[";
+        for (int32_t j = 0; j < numInst; j++) {
+            if (j != 0) json << ',';
+            json << instTuningsLo[j];
+        }
+        json << "]"
+             << ",\"instTuningsMid\":[";
+        for (int32_t j = 0; j < numInst; j++) {
+            if (j != 0) json << ',';
+            json << instTuningsMid[j];
+        }
+        json << "]"
+             << ",\"instTuningsHi\":[";
+        for (int32_t j = 0; j < numInst; j++) {
+            if (j != 0) json << ',';
+            json << instTuningsHi[j];
+        }
+        json << "]"
+             << ",\"drumTunings\":[";
+        for (int32_t j = 0; j < numDrum; j++) {
+            if (j != 0) json << ',';
+            json << ((idx < totalInts) ? arr[idx++] : 0);
+        }
+        json << "]"
+             << ",\"sfxTunings\":[";
+        for (int32_t j = 0; j < numSfx; j++) {
+            if (j != 0) json << ',';
+            json << ((idx < totalInts) ? arr[idx++] : 0);
+        }
+        json << "]}";
+    }
+    json << "]}";
+
+    Debug::updateSoundFontInfos(json.str());
+    RECOMP_RETURN(bool, true);
+}
+
 RECOMP_DLL_FUNC(AudioApiNative_Dma) {
     auto ptr = RECOMP_ARG(int32_t, 0);
     size_t size = RECOMP_ARG(uint32_t, 1);

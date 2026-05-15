@@ -59,6 +59,9 @@ native_libraries = [
         "AudioApiNative_DebugRegisterTag",
         "AudioApiNative_DebugGetMixOverride",
         "AudioApiNative_DebugSetMixerOpen",
+        "AudioApiNative_DebugQuerySamplePatch",
+        "AudioApiNative_DebugTakeSamplePatch",
+        "AudioApiNative_DebugPushSoundFontInfos",
     ] }
 ]
 

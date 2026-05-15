@@ -29,6 +29,7 @@ RecompQueue* RecompQueue_Create();
 void RecompQueue_Destroy(RecompQueue* queue);
 bool RecompQueue_Push(RecompQueue* queue, u32 op, u32 arg0, u32 arg1, void** data);
 bool RecompQueue_PushIfNotQueued(RecompQueue* queue, u32 op, u32 arg0, u32 arg1, void** data);
+bool RecompQueue_UpdateOrPush(RecompQueue* queue, u32 op, u32 arg0, u32 arg1, void** data, void** outOldData);
 bool RecompQueue_IsCmdNotQueued(RecompQueue* queue, u32 op, u32 arg0, u32 arg1);
 void RecompQueue_Drain(RecompQueue* queue, void (*drainFunc)(RecompQueueCmd* cmd));
 void RecompQueue_Empty(RecompQueue* queue);

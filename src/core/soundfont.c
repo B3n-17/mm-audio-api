@@ -645,7 +645,16 @@ RECOMP_EXPORT void AudioApi_ReplaceDrum(s32 fontId, s32 drumId, Drum* drum) {
     CustomSoundFont* soundFont = (CustomSoundFont*)entry->romAddr;
 
     if (IS_KSEG0(entry->romAddr) && soundFont->type == SOUNDFONT_CUSTOM) {
+        Drum* queueCopy = AudioApi_CopyDrum(copy);
         AudioApi_ReplaceDrumInternal(soundFont, drumId, copy);
+        if (queueCopy != NULL) {
+            Drum* oldQueued = NULL;
+            RecompQueue_UpdateOrPush(soundFontLoadQueue, AUDIOAPI_CMD_OP_REPLACE_DRUM,
+                                     fontId, drumId, (void**)&queueCopy, (void**)&oldQueued);
+            if (oldQueued != NULL) {
+                AudioApi_FreeDrum(oldQueued);
+            }
+        }
     } else {
         RecompQueue_PushIfNotQueued(soundFontLoadQueue, AUDIOAPI_CMD_OP_REPLACE_DRUM,
                                     fontId, drumId, (void**)&copy);
@@ -682,7 +691,16 @@ RECOMP_EXPORT void AudioApi_ReplaceSoundEffect(s32 fontId, s32 sfxId, SoundEffec
     CustomSoundFont* soundFont = (CustomSoundFont*)entry->romAddr;
 
     if (IS_KSEG0(entry->romAddr) && soundFont->type == SOUNDFONT_CUSTOM) {
+        SoundEffect* queueCopy = AudioApi_CopySoundEffect(copy);
         AudioApi_ReplaceSoundEffectInternal(soundFont, sfxId, copy);
+        if (queueCopy != NULL) {
+            SoundEffect* oldQueued = NULL;
+            RecompQueue_UpdateOrPush(soundFontLoadQueue, AUDIOAPI_CMD_OP_REPLACE_SOUNDEFFECT,
+                                     fontId, sfxId, (void**)&queueCopy, (void**)&oldQueued);
+            if (oldQueued != NULL) {
+                AudioApi_FreeSoundEffect(oldQueued);
+            }
+        }
     } else {
         RecompQueue_PushIfNotQueued(soundFontLoadQueue, AUDIOAPI_CMD_OP_REPLACE_SOUNDEFFECT,
                                     fontId, sfxId, (void**)&copy);
@@ -699,27 +717,49 @@ void AudioApi_ReplaceInstrumentInternal(CustomSoundFont* soundFont, s32 instId, 
 /* Public: Deep-copy and replace instrument. Queues during QUEUEING; defers for ROM fonts. */
 RECOMP_EXPORT void AudioApi_ReplaceInstrument(s32 fontId, s32 instId, Instrument* instrument) {
     if (gAudioApiInitPhase == AUDIOAPI_INIT_NOT_READY) {
+        recomp_printf("[ReplaceInst] NOT_READY\n");
         return;
     }
     Instrument* copy = AudioApi_CopyInstrument(instrument);
-    if (!copy) return;
+    if (!copy) { recomp_printf("[ReplaceInst] CopyInstrument failed\n"); return; }
 
     if (gAudioApiInitPhase == AUDIOAPI_INIT_QUEUEING) {
+        recomp_printf("[ReplaceInst] QUEUEING -> soundFontInitQueue font=%d inst=%d\n", fontId, instId);
         RecompQueue_PushIfNotQueued(soundFontInitQueue, AUDIOAPI_CMD_OP_REPLACE_INSTRUMENT,
                                     fontId, instId, (void**)&copy);
         return;
     }
 
     if (fontId >= gAudioCtx.soundFontTable->header.numEntries) {
+        recomp_printf("[ReplaceInst] fontId %d out of range (%d)\n", fontId, gAudioCtx.soundFontTable->header.numEntries);
         return;
     }
 
     AudioTableEntry* entry = &gAudioCtx.soundFontTable->entries[fontId];
     CustomSoundFont* soundFont = (CustomSoundFont*)entry->romAddr;
 
+    recomp_printf("[ReplaceInst] font=%d inst=%d romAddr=%p IS_KSEG0=%d type=%d\n",
+                  fontId, instId, (void*)entry->romAddr,
+                  IS_KSEG0(entry->romAddr) ? 1 : 0,
+                  IS_KSEG0(entry->romAddr) ? (int)soundFont->type : -1);
+
     if (IS_KSEG0(entry->romAddr) && soundFont->type == SOUNDFONT_CUSTOM) {
+        // Apply immediately, and also update the load queue so the replacement survives font eviction/reload.
+        Instrument* queueCopy = AudioApi_CopyInstrument(copy);
         AudioApi_ReplaceInstrumentInternal(soundFont, instId, copy);
+        recomp_printf("[ReplaceInst] applied immediately: soundFont->instruments[%d]=%p\n", instId, (void*)soundFont->instruments[instId]);
+        recomp_printf("[ReplaceInst] soundFontList[%d].instruments[%d]=%p\n", fontId, instId, (void*)gAudioCtx.soundFontList[fontId].instruments[instId]);
+        if (queueCopy != NULL) {
+            Instrument* oldQueued = NULL;
+            bool updated = RecompQueue_UpdateOrPush(soundFontLoadQueue, AUDIOAPI_CMD_OP_REPLACE_INSTRUMENT,
+                                     fontId, instId, (void**)&queueCopy, (void**)&oldQueued);
+            recomp_printf("[ReplaceInst] UpdateOrPush result=%d oldQueued=%p\n", (int)updated, (void*)oldQueued);
+            if (oldQueued != NULL) {
+                AudioApi_FreeInstrument(oldQueued);
+            }
+        }
     } else {
+        recomp_printf("[ReplaceInst] deferred to soundFontLoadQueue\n");
         RecompQueue_PushIfNotQueued(soundFontLoadQueue, AUDIOAPI_CMD_OP_REPLACE_INSTRUMENT,
                                     fontId, instId, (void**)&copy);
     }

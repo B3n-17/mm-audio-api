@@ -1,14 +1,551 @@
 #include <core/debug.h>
 
-#include <core/init.h>
-#include <core/sequence_functions.h>
 #include <recomp/modding.h>
 #include <recomp/recompconfig.h>
+#include <recomp/recomputils.h>
+#include <core/init.h>
+#include <core/sequence_functions.h>
+#include <audio/soundfont.h>
+#include <audio_api/soundfont.h>
+#include <audio/effects.h>
 
 u8 gAudioApiDebugHttpEnabled = 0;
 u8 gAudioApiDebugVerbose = 0;
 static s8 sPrevSeqIo[SEQ_PLAYER_MAX][8];
 static u8 sPrevSeqIoInitialized = 0;
+
+// ============================================================
+// Sample Patch imports
+// ============================================================
+
+// Layout of the 88-byte header written by AudioApiNative_DebugQuerySamplePatch.
+typedef struct DebugSamplePatchHeader {
+    /* 0x00 */ s32 fontId;
+    /* 0x04 */ s32 instId;
+    /* 0x08 */ s32 drumId;
+    /* 0x0C */ s32 sfxId;
+    /* 0x10 */ u8  pitchRegion;
+    /* 0x11 */ u8  pad[3];
+    /* 0x14 */ f32 tuning;
+    /* 0x18 */ u32 numSamples;
+    /* 0x1C */ u32 sampleDataSize;
+    /* 0x20 */ u32 codec;
+    /* 0x24 */ s32 bookOrder;
+    /* 0x28 */ s32 bookNumPredictors;
+    /* 0x2C */ u32 bookCoeffCount;
+    /* 0x30 */ u32 loopStart;
+    /* 0x34 */ u32 loopEnd;
+    /* 0x38 */ s32 loopCount;
+    /* 0x3C */ s16 loopPredictorState[16];
+    // Total: 0x5C = 92 bytes
+} DebugSamplePatchHeader;
+
+RECOMP_IMPORT(".", bool AudioApiNative_DebugQuerySamplePatch(DebugSamplePatchHeader* out));
+RECOMP_IMPORT(".", bool AudioApiNative_DebugTakeSamplePatch(s16* bookCoeffs, u8* adpcmData));
+// arr layout:
+//   [0]                       = SEQ_PLAYER_MAX (= 5 for MM)
+//   [1 .. SEQ_PLAYER_MAX]     = defaultFont per player (0xFF = inactive)
+//   [SEQ_PLAYER_MAX+1]        = numFonts
+//   Then for each font, a variable-length block:
+//     [0] numInstruments
+//     [1] numDrums
+//     [2] numSfx
+//     [3 .. 3+numInstruments-1] per-instrument region bitmask:
+//           bit 0 = has lo sample, bit 1 = has mid sample, bit 2 = has hi sample
+RECOMP_IMPORT(".", bool AudioApiNative_DebugPushSoundFontInfos(s32* arr, u32 totalInts));
+
+// ============================================================
+// Font info push (throttled)
+// ============================================================
+
+#define FONT_INFO_PUSH_INTERVAL 60  // push every ~1 sec at 60fps
+#define AUDIOAPI_DEBUG_TUNING_SCALE 1000000.0f
+
+static u32 sFontInfoPushCounter = 0;
+
+static s32 AudioApi_DebugEncodeTuning(f32 tuning) {
+    if (tuning >= 0.0f) {
+        return (s32)(tuning * AUDIOAPI_DEBUG_TUNING_SCALE + 0.5f);
+    }
+    return (s32)(tuning * AUDIOAPI_DEBUG_TUNING_SCALE - 0.5f);
+}
+
+static void AudioApi_DebugRestartPatchedNote(Note* note, SequenceLayer* layer, TunedSample* tunedSample, f32 freqScale) {
+    if (note == NULL || layer == NULL || layer == NO_LAYER || tunedSample == NULL || tunedSample->sample == NULL) {
+        return;
+    }
+
+    layer->tunedSample = tunedSample;
+    layer->freqScale = freqScale;
+    layer->notePropertiesNeedInit = true;
+
+    note->sampleState.tunedSample = tunedSample;
+    note->sampleState.bitField0.needsInit = true;
+    note->sampleState.bitField0.finished = false;
+    note->playbackState.startSamplePos = tunedSample->sample->loop->header.start;
+}
+
+static void AudioApi_DebugRefreshInstrumentNotes(s32 fontId, s32 instId) {
+    Instrument* instrument = AudioPlayback_GetInstrumentInner(fontId, instId);
+    s32 targetInstOrWave = instId + 2;
+    s32 i;
+
+    if (instrument == NULL) {
+        return;
+    }
+
+    for (i = 0; i < gAudioCtx.numNotes; i++) {
+        Note* note = &gAudioCtx.notes[i];
+        SequenceLayer* layer = note->playbackState.parentLayer;
+        SequenceChannel* channel;
+        s32 instOrWave;
+        TunedSample* tunedSample;
+
+        if (!note->sampleState.bitField0.enabled || note->sampleState.bitField1.isSyntheticWave) {
+            continue;
+        }
+        if (note->playbackState.fontId != fontId || layer == NULL || layer == NO_LAYER) {
+            continue;
+        }
+
+        channel = layer->channel;
+        if (channel == NULL || !IS_SEQUENCE_CHANNEL_VALID(channel)) {
+            continue;
+        }
+
+        instOrWave = (layer->instOrWave == 0xFF) ? channel->instOrWave : layer->instOrWave;
+        if (instOrWave != targetInstOrWave) {
+            continue;
+        }
+
+        if (layer->instOrWave == 0xFF) {
+            channel->instrument = instrument;
+        } else {
+            layer->instrument = instrument;
+        }
+
+        tunedSample = AudioPlayback_GetInstrumentTunedSample(instrument, layer->semitone);
+        if (tunedSample == NULL || tunedSample->sample == NULL) {
+            continue;
+        }
+
+        AudioApi_DebugRestartPatchedNote(note, layer, tunedSample,
+                                         gPitchFrequencies[layer->semitone] * tunedSample->tuning * layer->bend);
+    }
+}
+
+static void AudioApi_DebugRefreshDrumNotes(s32 fontId, s32 drumId) {
+    Drum* drum = AudioPlayback_GetDrum(fontId, drumId);
+    s32 i;
+
+    if (drum == NULL || drum->tunedSample.sample == NULL) {
+        return;
+    }
+
+    for (i = 0; i < gAudioCtx.numNotes; i++) {
+        Note* note = &gAudioCtx.notes[i];
+        SequenceLayer* layer = note->playbackState.parentLayer;
+        SequenceChannel* channel;
+        s32 instOrWave;
+
+        if (!note->sampleState.bitField0.enabled || note->sampleState.bitField1.isSyntheticWave) {
+            continue;
+        }
+        if (note->playbackState.fontId != fontId || layer == NULL || layer == NO_LAYER) {
+            continue;
+        }
+
+        channel = layer->channel;
+        if (channel == NULL || !IS_SEQUENCE_CHANNEL_VALID(channel)) {
+            continue;
+        }
+
+        instOrWave = (layer->instOrWave == 0xFF) ? channel->instOrWave : layer->instOrWave;
+        if (instOrWave != 0 || layer->semitone != drumId) {
+            continue;
+        }
+
+        layer->adsr.envelope = drum->envelope;
+        layer->adsr.decayIndex = drum->adsrDecayIndex;
+        if (!layer->ignoreDrumPan) {
+            layer->pan = drum->pan;
+        }
+
+        AudioApi_DebugRestartPatchedNote(note, layer, &drum->tunedSample, drum->tunedSample.tuning * layer->bend);
+    }
+}
+
+static void AudioApi_DebugRefreshSfxNotes(s32 fontId, s32 sfxId) {
+    SoundEffect* soundEffect = AudioPlayback_GetSoundEffect(fontId, sfxId);
+    s32 i;
+
+    if (soundEffect == NULL || soundEffect->tunedSample.sample == NULL) {
+        return;
+    }
+
+    for (i = 0; i < gAudioCtx.numNotes; i++) {
+        Note* note = &gAudioCtx.notes[i];
+        SequenceLayer* layer = note->playbackState.parentLayer;
+        SequenceChannel* channel;
+        s32 instOrWave;
+        s32 activeSfxId;
+
+        if (!note->sampleState.bitField0.enabled || note->sampleState.bitField1.isSyntheticWave) {
+            continue;
+        }
+        if (note->playbackState.fontId != fontId || layer == NULL || layer == NO_LAYER) {
+            continue;
+        }
+
+        channel = layer->channel;
+        if (channel == NULL || !IS_SEQUENCE_CHANNEL_VALID(channel)) {
+            continue;
+        }
+
+        instOrWave = (layer->instOrWave == 0xFF) ? channel->instOrWave : layer->instOrWave;
+        activeSfxId = ((s32)layer->transposition << 6) + layer->semitone;
+        if (instOrWave != 1 || activeSfxId != sfxId) {
+            continue;
+        }
+
+        AudioApi_DebugRestartPatchedNote(note, layer, &soundEffect->tunedSample,
+                                         soundEffect->tunedSample.tuning * layer->bend);
+    }
+}
+
+static void AudioApi_DebugPushFontInfos(void) {
+    u32 numFonts;
+    u32 numPlayers;
+    u32 totalInts;
+    s32* arr;
+    u32 i;
+    u32 j;
+    u32 idx;
+
+    if (!gAudioApiDebugHttpEnabled) {
+        return;
+    }
+
+    sFontInfoPushCounter++;
+    if (sFontInfoPushCounter < FONT_INFO_PUSH_INTERVAL) {
+        return;
+    }
+    sFontInfoPushCounter = 0;
+
+    numFonts = gAudioCtx.soundFontTable->header.numEntries;
+    numPlayers = SEQ_PLAYER_MAX;
+
+    // Header: 1 (numPlayers) + numPlayers + 1 (numFonts).
+    // Per font: 3 + numInst * 4 (mask + lo/mid/hi tuning) + numDrums + numSfx.
+    totalInts = 1 + numPlayers + 1;
+    for (i = 0; i < numFonts; i++) {
+        totalInts += 3 + (gAudioCtx.soundFontList[i].numInstruments * 4) +
+                     gAudioCtx.soundFontList[i].numDrums + gAudioCtx.soundFontList[i].numSfx;
+    }
+
+    arr = recomp_alloc(sizeof(s32) * totalInts);
+    if (arr == NULL) {
+        return;
+    }
+
+    // Header.
+    idx = 0;
+    arr[idx++] = (s32)numPlayers;
+    for (i = 0; i < numPlayers; i++) {
+        arr[idx++] = (s32)gAudioCtx.seqPlayers[i].defaultFont;
+    }
+    arr[idx++] = (s32)numFonts;
+
+    // Per-font blocks.
+    for (i = 0; i < numFonts; i++) {
+        u32 numInst = gAudioCtx.soundFontList[i].numInstruments;
+        arr[idx++] = (s32)numInst;
+        arr[idx++] = (s32)gAudioCtx.soundFontList[i].numDrums;
+        arr[idx++] = (s32)gAudioCtx.soundFontList[i].numSfx;
+
+        for (j = 0; j < numInst; j++) {
+            s32 mask = 0;
+            s32 loTuning = 0;
+            s32 midTuning = 0;
+            s32 hiTuning = 0;
+            if (gAudioCtx.soundFontList[i].instruments != NULL) {
+                Instrument* inst = gAudioCtx.soundFontList[i].instruments[j];
+                if (inst != NULL) {
+                    if (inst->lowPitchTunedSample.sample != NULL) {
+                        mask |= 1;
+                        loTuning = AudioApi_DebugEncodeTuning(inst->lowPitchTunedSample.tuning);
+                    }
+                    if (inst->normalPitchTunedSample.sample != NULL) {
+                        mask |= 2;
+                        midTuning = AudioApi_DebugEncodeTuning(inst->normalPitchTunedSample.tuning);
+                    }
+                    if (inst->highPitchTunedSample.sample != NULL) {
+                        mask |= 4;
+                        hiTuning = AudioApi_DebugEncodeTuning(inst->highPitchTunedSample.tuning);
+                    }
+                }
+            }
+            arr[idx++] = mask;
+            arr[idx++] = loTuning;
+            arr[idx++] = midTuning;
+            arr[idx++] = hiTuning;
+        }
+
+        for (j = 0; j < gAudioCtx.soundFontList[i].numDrums; j++) {
+            s32 tuning = 0;
+            if (gAudioCtx.soundFontList[i].drums != NULL && gAudioCtx.soundFontList[i].drums[j] != NULL &&
+                gAudioCtx.soundFontList[i].drums[j]->tunedSample.sample != NULL) {
+                tuning = AudioApi_DebugEncodeTuning(gAudioCtx.soundFontList[i].drums[j]->tunedSample.tuning);
+            }
+            arr[idx++] = tuning;
+        }
+
+        for (j = 0; j < gAudioCtx.soundFontList[i].numSfx; j++) {
+            s32 tuning = 0;
+            if (gAudioCtx.soundFontList[i].soundEffects != NULL &&
+                gAudioCtx.soundFontList[i].soundEffects[j].tunedSample.sample != NULL) {
+                tuning = AudioApi_DebugEncodeTuning(gAudioCtx.soundFontList[i].soundEffects[j].tunedSample.tuning);
+            }
+            arr[idx++] = tuning;
+        }
+    }
+
+    AudioApiNative_DebugPushSoundFontInfos(arr, totalInts);
+    recomp_free(arr);
+}
+
+// ============================================================
+// Sample patch application
+// ============================================================
+
+static void AudioApi_DebugApplySamplePatch(void) {
+    DebugSamplePatchHeader hdr;
+    AdpcmBook* book;
+    AdpcmLoop* loop;
+    Sample* sample;
+    s16* bookCoeffs;
+    u8* adpcmData;
+    size_t bookSize;
+    size_t loopSize;
+    bool hasLoop;
+    Instrument* inst;
+    Drum* drum;
+    SoundEffect sfx;
+
+    if (!gAudioApiDebugHttpEnabled) {
+        return;
+    }
+
+    if (!AudioApiNative_DebugQuerySamplePatch(&hdr)) {
+        return;
+    }
+
+    // Validate.
+    if (hdr.fontId < 0 || (u32)hdr.fontId >= (u32)gAudioCtx.soundFontTable->header.numEntries) {
+        // Consume and discard.
+        AudioApiNative_DebugTakeSamplePatch(NULL, NULL);
+        return;
+    }
+    if (hdr.sampleDataSize == 0) {
+        AudioApiNative_DebugTakeSamplePatch(NULL, NULL);
+        return;
+    }
+
+    if (hdr.codec == CODEC_ADPCM && hdr.bookCoeffCount == 0) {
+        AudioApiNative_DebugTakeSamplePatch(NULL, NULL);
+        return;
+    }
+
+    bookCoeffs = NULL;
+    if (hdr.bookCoeffCount != 0) {
+        bookCoeffs = recomp_alloc(sizeof(s16) * hdr.bookCoeffCount);
+        if (bookCoeffs == NULL) {
+            AudioApiNative_DebugTakeSamplePatch(NULL, NULL);
+            return;
+        }
+    }
+
+    // Allocate ADPCM data buffer (must be 16-byte aligned for RSP DMA).
+    // recomp_alloc returns suitably aligned memory.
+    adpcmData = recomp_alloc(hdr.sampleDataSize);
+    if (adpcmData == NULL) {
+        if (bookCoeffs != NULL) {
+            recomp_free(bookCoeffs);
+        }
+        AudioApiNative_DebugTakeSamplePatch(NULL, NULL);
+        return;
+    }
+
+    // Consume the patch, filling both buffers.
+    if (!AudioApiNative_DebugTakeSamplePatch(bookCoeffs, adpcmData)) {
+        if (bookCoeffs != NULL) {
+            recomp_free(bookCoeffs);
+        }
+        recomp_free(adpcmData);
+        return;
+    }
+
+    book = NULL;
+    if (hdr.codec == CODEC_ADPCM) {
+        bookSize = sizeof(AdpcmBookHeader) + sizeof(s16) * hdr.bookCoeffCount;
+        book = recomp_alloc(bookSize);
+        if (book == NULL) {
+            recomp_free(bookCoeffs);
+            recomp_free(adpcmData);
+            return;
+        }
+        book->header.order         = hdr.bookOrder;
+        book->header.numPredictors = hdr.bookNumPredictors;
+        Lib_MemCpy(book->codeBook, bookCoeffs, sizeof(s16) * hdr.bookCoeffCount);
+    }
+    if (bookCoeffs != NULL) {
+        recomp_free(bookCoeffs);
+    }
+
+    // Build AdpcmLoop.
+    hasLoop = (hdr.loopCount != 0) && (hdr.loopEnd > hdr.loopStart);
+    loopSize = hasLoop ? sizeof(AdpcmLoop) : sizeof(AdpcmLoopHeader);
+    loop = recomp_alloc(loopSize);
+    if (loop == NULL) {
+        recomp_free(book);
+        recomp_free(adpcmData);
+        return;
+    }
+    loop->header.start     = hdr.loopStart;
+    loop->header.loopEnd   = hdr.loopEnd;
+    loop->header.count     = (u32)hdr.loopCount;
+    loop->header.sampleEnd = hdr.numSamples;
+    if (hasLoop) {
+        Lib_MemCpy(loop->predictorState, hdr.loopPredictorState, sizeof(s16) * 16);
+    }
+
+    // Build Sample.
+    sample = recomp_alloc(sizeof(Sample));
+    if (sample == NULL) {
+        recomp_free(loop);
+        recomp_free(book);
+        recomp_free(adpcmData);
+        return;
+    }
+    sample->unk_0       = 0;
+    sample->codec       = hdr.codec;
+    sample->medium      = MEDIUM_CART;
+    sample->unk_bit26   = 0;
+    sample->isRelocated = true;
+    sample->size        = hdr.sampleDataSize;
+    sample->sampleAddr  = adpcmData;
+    sample->loop        = loop;
+    sample->book        = book;
+
+    recomp_printf("[SamplePatch] received: font=%d inst=%d drum=%d sfx=%d region=%d codec=%u dataSize=%u\n",
+                  hdr.fontId, hdr.instId, hdr.drumId, hdr.sfxId, hdr.pitchRegion, hdr.codec, hdr.sampleDataSize);
+
+    // Apply to the appropriate slot.
+    if (hdr.instId >= 0) {
+        s32 numInst = (s32)gAudioCtx.soundFontList[hdr.fontId].numInstruments;
+        recomp_printf("[SamplePatch] inst path: numInst=%d existing=%p\n",
+                      numInst, hdr.instId < numInst ? (void*)gAudioCtx.soundFontList[hdr.fontId].instruments[hdr.instId] : NULL);
+        if (hdr.instId >= numInst) {
+            goto cleanup;
+        }
+
+        // Clone the existing instrument to preserve envelope + other pitch regions.
+        Instrument* existing = gAudioCtx.soundFontList[hdr.fontId].instruments[hdr.instId];
+        if (existing == NULL) {
+            // Create a new minimal instrument.
+            inst = recomp_alloc(sizeof(Instrument));
+            if (inst == NULL) goto cleanup;
+            Lib_MemSet(inst, 0, sizeof(Instrument));
+            inst->isRelocated    = true;
+            inst->normalRangeLo  = 0;
+            inst->normalRangeHi  = 0x7F;
+            inst->adsrDecayIndex = 0;
+            inst->envelope       = DefaultEnvelopePoint;
+        } else {
+            inst = recomp_alloc(sizeof(Instrument));
+            if (inst == NULL) goto cleanup;
+            Lib_MemCpy(inst, existing, sizeof(Instrument));
+            inst->isRelocated = true;
+        }
+
+        // Build the TunedSample for the target pitch region.
+        switch (hdr.pitchRegion) {
+            case 0:
+                inst->lowPitchTunedSample.sample  = sample;
+                inst->lowPitchTunedSample.tuning  = hdr.tuning;
+                break;
+            case 2:
+                inst->highPitchTunedSample.sample = sample;
+                inst->highPitchTunedSample.tuning = hdr.tuning;
+                break;
+            default: // 1 = normal
+                inst->normalPitchTunedSample.sample = sample;
+                inst->normalPitchTunedSample.tuning = hdr.tuning;
+                break;
+        }
+
+        AudioApi_ReplaceInstrument(hdr.fontId, hdr.instId, inst);
+        AudioApi_DebugRefreshInstrumentNotes(hdr.fontId, hdr.instId);
+        // AudioApi_CopySample (called internally) deep-copies loop/book but keeps sampleAddr ptr.
+        // So: free the Sample struct + loop + book (all deep-copied); keep adpcmData (not copied).
+        recomp_free(inst);
+        recomp_free(sample);
+        recomp_free(loop);
+        recomp_free(book);
+        // adpcmData is now owned by the internal copy via sampleAddr — do NOT free.
+        return;
+
+    } else if (hdr.drumId >= 0) {
+        s32 numDrum = (s32)gAudioCtx.soundFontList[hdr.fontId].numDrums;
+        if (hdr.drumId >= numDrum) goto cleanup;
+
+        Drum* existing = gAudioCtx.soundFontList[hdr.fontId].drums[hdr.drumId];
+        drum = recomp_alloc(sizeof(Drum));
+        if (drum == NULL) goto cleanup;
+
+        if (existing != NULL) {
+            Lib_MemCpy(drum, existing, sizeof(Drum));
+        } else {
+            Lib_MemSet(drum, 0, sizeof(Drum));
+            drum->adsrDecayIndex = 0;
+            drum->pan            = 64;
+            drum->envelope       = DefaultEnvelopePoint;
+        }
+
+        drum->isRelocated            = true;
+        drum->tunedSample.sample     = sample;
+        drum->tunedSample.tuning     = hdr.tuning;
+
+        AudioApi_ReplaceDrum(hdr.fontId, hdr.drumId, drum);
+        AudioApi_DebugRefreshDrumNotes(hdr.fontId, hdr.drumId);
+        recomp_free(drum);
+        recomp_free(sample);
+        recomp_free(loop);
+        recomp_free(book);
+        // adpcmData kept alive via sampleAddr in the internal copy.
+        return;
+
+    } else if (hdr.sfxId >= 0) {
+        s32 numSfx = (s32)gAudioCtx.soundFontList[hdr.fontId].numSfx;
+        if (hdr.sfxId >= numSfx) goto cleanup;
+
+        sfx.tunedSample.sample = sample;
+        sfx.tunedSample.tuning = hdr.tuning;
+        AudioApi_ReplaceSoundEffect(hdr.fontId, hdr.sfxId, &sfx);
+        AudioApi_DebugRefreshSfxNotes(hdr.fontId, hdr.sfxId);
+        recomp_free(sample);
+        recomp_free(loop);
+        recomp_free(book);
+        // adpcmData kept alive via sampleAddr.
+        return;
+    }
+
+cleanup:
+    recomp_free(sample);
+    recomp_free(loop);
+    recomp_free(book);
+    recomp_free(adpcmData);
+}
 
 static s32 AudioApi_DebugNormalizePan(s32 pan) {
     if (pan < 0) {
@@ -42,13 +579,15 @@ void AudioApi_DebugInitFromConfig(void) {
 }
 
 void AudioApi_DebugSyncSnapshot(void) {
+    AudioApi_DebugApplySamplePatch();
+    AudioApi_DebugPushFontInfos();
     u32 i;
     u32 j;
     u32 pi;
     u32 ci;
     s32 mixOut[4];
     s32 snapshotTail[2];
-    s32 playerState[228];
+    s32 playerState[260];
     SequencePlayer* seqPlayer;
     SequenceChannel* channel;
     SequenceLayer* layer;
@@ -171,7 +710,8 @@ void AudioApi_DebugSyncSnapshot(void) {
             }
         }
 
-        // ch fields: [20..35] chEnabled, [36..51] chPan, [52..67] chVolMilli, [68..83] chReverbVol
+        // ch fields: [20..35] chEnabled, [36..51] chPan, [52..67] chVolMilli, [68..83] chReverbVol,
+        // [228..243] chFontId, [244..259] chInstOrWave
         for (j = 0; j < SEQ_NUM_CHANNELS; j++) {
             channel = seqPlayer->channels[j];
             if (channel == NULL || !IS_SEQUENCE_CHANNEL_VALID(channel)) {
@@ -179,6 +719,8 @@ void AudioApi_DebugSyncSnapshot(void) {
                 playerState[36 + j] = -1;
                 playerState[52 + j] = 0;
                 playerState[68 + j] = 0;
+                playerState[228 + j] = -1;
+                playerState[244 + j] = -1;
                 continue;
             }
 
@@ -186,6 +728,8 @@ void AudioApi_DebugSyncSnapshot(void) {
             playerState[36 + j] = AudioApi_DebugNormalizePan(channel->pan);
             playerState[52 + j] = channel->volume * 1000.0f;
             playerState[68 + j] = channel->targetReverbVol;
+            playerState[228 + j] = channel->fontId;
+            playerState[244 + j] = channel->instOrWave;
         }
 
         // layer fields: [84..99] layerEnabledMask, [100..115] layerPan,

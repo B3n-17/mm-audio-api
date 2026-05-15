@@ -1,8 +1,5 @@
 # Vanilla Sequence IO Behavior
 
-Analysis of all Majora's Mask sequences that use IO ports or non-musical instructions.
-Relevant for understanding what behavior must be replicated when replacing sequences with streamed audio.
-
 ## System Sequences (cannot be replaced with streamed audio)
 
 | Seq | Name | IO Ports | Notes |

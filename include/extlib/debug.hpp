@@ -3,6 +3,7 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -49,6 +50,8 @@ struct PlayerState {
     std::array<int32_t, 16> layerNoteCurL;
     std::array<int32_t, 16> layerNoteCurR;
     std::array<int32_t, 16> layerSampleMediumCodec;
+    std::array<int32_t, 16> chFontId;
+    std::array<int32_t, 16> chInstOrWave;
 };
 
 struct Snapshot {
@@ -110,5 +113,36 @@ std::string getStreamsJson();
 
 void startHttpServer();
 std::string buildAudioDebugHtml();
+
+// Sample patch: encoded VADPCM data ready for the game to apply.
+struct SamplePatchData {
+    int32_t  fontId       = -1;
+    int32_t  instId       = -1;   // -1 if not targeting an instrument
+    int32_t  drumId       = -1;   // -1 if not targeting a drum
+    int32_t  sfxId        = -1;   // -1 if not targeting a sfx
+    uint8_t  pitchRegion  = 1;    // 0=low, 1=normal, 2=high (instrument only)
+    float    tuning       = 1.0f;
+    uint32_t codec        = 0;
+
+    uint32_t numSamples   = 0;
+    std::vector<uint8_t>  adpcmData;
+
+    int32_t  bookOrder          = 2;
+    int32_t  bookNumPredictors  = 4;
+    std::vector<int16_t> bookCoeffs; // length = 8 * order * numPredictors
+
+    uint32_t loopStart    = 0;
+    uint32_t loopEnd      = 0;
+    int32_t  loopCount    = 0;
+    std::array<int16_t, 16> loopPredictorState = {};
+};
+
+bool hasSamplePatch();
+std::optional<SamplePatchData> peekSamplePatch();  // read without consuming
+std::optional<SamplePatchData> takeSamplePatch();  // read and consume
+
+// Called from the native DLL func to push font info for GET /soundfonts.
+// json is a pre-formatted {"fonts":[...]} string.
+void updateSoundFontInfos(const std::string& json);
 
 } // namespace Debug

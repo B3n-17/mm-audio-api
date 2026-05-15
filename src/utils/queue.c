@@ -84,6 +84,22 @@ bool RecompQueue_PushIfNotQueued(RecompQueue* queue, u32 op, u32 arg0, u32 arg1,
     return RecompQueue_Push(queue, op, arg0, arg1, data);
 }
 
+/* Update existing entry's data if (op, arg0, arg1) matches; otherwise push new entry.
+ * If an existing entry was updated, *outOldData receives the old data pointer (caller must free).
+ * If a new entry was pushed, *outOldData is set to NULL. outOldData may be NULL if not needed. */
+bool RecompQueue_UpdateOrPush(RecompQueue* queue, u32 op, u32 arg0, u32 arg1, void** data, void** outOldData) {
+    for (s32 i = 0; i < queue->numEntries; i++) {
+        RecompQueueCmd* cmd = &queue->entries[i];
+        if (cmd->op == op && cmd->arg0 == arg0 && cmd->arg1 == arg1) {
+            if (outOldData) *outOldData = cmd->data;
+            cmd->data = (data ? *data : NULL);
+            return true;
+        }
+    }
+    if (outOldData) *outOldData = NULL;
+    return RecompQueue_Push(queue, op, arg0, arg1, data);
+}
+
 /* Linear scan: returns true if NO entry matches (op, arg0, arg1), false if duplicate exists. */
 bool RecompQueue_IsCmdNotQueued(RecompQueue* queue, u32 op, u32 arg0, u32 arg1) {
     for (s32 i = 0; i < queue->numEntries; i++) {

@@ -110,6 +110,12 @@
       font-weight: 600;
     }
 
+    .btn.attn {
+      background: rgba(125, 211, 252, 0.14);
+      border-color: #4f89b6;
+      box-shadow: 0 0 0 1px rgba(125, 211, 252, 0.08), 0 0 18px rgba(56, 189, 248, 0.12);
+    }
+
     .input, .select {
       border-radius: 12px;
       padding: 0 12px;
@@ -1050,6 +1056,7 @@
       <button id="tabOverviewBtn" class="tab-btn active" type="button">Overview</button>
       <button id="tabEventsBtn" class="tab-btn" type="button">Events</button>
       <button id="tabDjBtn" class="tab-btn" type="button">Majora's DJ</button>
+      <button id="tabPatcherBtn" class="tab-btn" type="button">Sample Patcher</button>
     </div>
 
     <div id="overviewTab" class="tab-panel active">
@@ -1179,11 +1186,153 @@
       </section>
     </div>
 
+    <div id="patcherTab" class="tab-panel">
+      <section class="panel">
+        <div class="panel-head">
+          <div class="panel-title">
+            <h2>Sample Patcher</h2>
+            <p>Replace a soundfont instrument, drum, or SFX sample at runtime. Drop a WAV file to encode and hot-swap it.</p>
+          </div>
+          <div class="chip"><span>API</span><strong>POST /soundfont-patch-sample</strong></div>
+        </div>
+        <div class="panel-body" style="display:flex;flex-direction:column;gap:18px;">
+
+          <!-- Controls row -->
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;align-items:end;">
+
+            <div style="display:flex;flex-direction:column;gap:6px;">
+              <label style="font-size:12px;color:var(--muted);font-family:var(--mono);">Font ID</label>
+              <select id="patcherFontId" class="select" style="min-width:100px;">
+                <option value="">— loading —</option>
+              </select>
+            </div>
+
+            <div style="display:flex;flex-direction:column;gap:8px;justify-content:flex-end;">
+              <label style="font-size:12px;color:var(--muted);font-family:var(--mono);display:flex;align-items:center;gap:8px;min-height:38px;">
+                <input id="patcherOnlyRelevant" type="checkbox" />
+                <span>Only relevant fonts</span>
+              </label>
+              <button id="patcherReloadBtn" class="btn" type="button">Reload info</button>
+            </div>
+
+            <div style="display:flex;flex-direction:column;gap:6px;">
+              <label style="font-size:12px;color:var(--muted);font-family:var(--mono);">Target type</label>
+              <select id="patcherTargetType" class="select">
+                <option value="inst">Instrument</option>
+                <option value="drum">Drum</option>
+                <option value="sfx">SFX</option>
+              </select>
+            </div>
+
+            <div style="display:flex;flex-direction:column;gap:6px;">
+              <label id="patcherSlotLabel" style="font-size:12px;color:var(--muted);font-family:var(--mono);">Inst ID</label>
+              <input id="patcherSlotId" class="input" type="number" min="0" value="0" style="width:100%;" />
+            </div>
+
+            <div id="patcherPitchRegionWrap" style="display:flex;flex-direction:column;gap:6px;">
+              <label style="font-size:12px;color:var(--muted);font-family:var(--mono);">Pitch region</label>
+              <select id="patcherPitchRegion" class="select">
+                <option value="1">Normal (default)</option>
+                <option value="0">Low</option>
+                <option value="2">High</option>
+              </select>
+            </div>
+
+            <div style="display:flex;flex-direction:column;gap:6px;">
+              <label style="font-size:12px;color:var(--muted);font-family:var(--mono);">Tuning</label>
+              <input id="patcherTuning" class="input" type="number" min="0.01" max="8" step="0.01" value="1.0" style="width:100%;" />
+            </div>
+
+          </div>
+
+          <!-- Loop controls -->
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;align-items:end;">
+            <div style="display:flex;flex-direction:column;gap:6px;">
+              <label style="font-size:12px;color:var(--muted);font-family:var(--mono);">Loop mode</label>
+              <select id="patcherLoopMode" class="select">
+                <option value="auto">Auto (from WAV smpl chunk)</option>
+                <option value="infinite">Infinite loop</option>
+                <option value="none">No loop</option>
+                <option value="manual">Manual</option>
+              </select>
+            </div>
+            <div id="patcherManualLoopWrap" style="display:contents;visibility:hidden;">
+              <div style="display:flex;flex-direction:column;gap:6px;">
+                <label style="font-size:12px;color:var(--muted);font-family:var(--mono);">Loop start (samples)</label>
+                <input id="patcherLoopStart" class="input" type="number" min="0" value="0" style="width:100%;" />
+              </div>
+              <div style="display:flex;flex-direction:column;gap:6px;">
+                <label style="font-size:12px;color:var(--muted);font-family:var(--mono);">Loop end (samples)</label>
+                <input id="patcherLoopEnd" class="input" type="number" min="0" value="0" style="width:100%;" />
+              </div>
+            </div>
+          </div>
+
+          <!-- Drop zone -->
+          <div id="patcherDropZone" style="
+            border: 2px dashed var(--line);
+            border-radius: var(--radius);
+            padding: 36px 24px;
+            text-align: center;
+            cursor: pointer;
+            transition: border-color .15s, background .15s;
+            background: var(--bg-elev);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 10px;
+          ">
+            <div style="font-size:32px;line-height:1;">🎵</div>
+            <div style="font-size:14px;color:var(--text);">Drop a <strong>.wav</strong> file here, or <span id="patcherBrowseLink" style="color:var(--accent);cursor:pointer;text-decoration:underline;">browse</span></div>
+            <div id="patcherFileName" style="font-size:12px;color:var(--muted);font-family:var(--mono);"></div>
+            <input id="patcherFileInput" type="file" accept=".wav,audio/wav" style="display:none;" />
+          </div>
+
+          <!-- Status + Apply -->
+          <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
+            <button id="patcherApplyBtn" class="btn" type="button" disabled>Apply patch</button>
+            <button id="patcherPreviewBtn" class="btn secondary" type="button" disabled>Preview WAV</button>
+            <div id="patcherStatus" style="font-size:13px;font-family:var(--mono);color:var(--muted);">Select a WAV file to continue.</div>
+          </div>
+
+          <!-- Font info table -->
+          <div id="patcherFontInfo" style="display:none;">
+            <div style="font-size:12px;color:var(--muted);margin-bottom:6px;font-family:var(--mono);">Selected font info</div>
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px;">
+              <input id="patcherFilter" class="input" type="text" placeholder="Filter samples..." style="max-width:260px;" />
+              <div style="font-size:11px;color:var(--muted-2);">Filter by slot, sample name, or usage</div>
+            </div>
+            <div id="patcherFontInfoBody" style="
+              font-size:13px;font-family:var(--mono);color:var(--text);
+              max-height:240px;overflow-y:auto;
+              background:var(--bg-elev);border:1px solid var(--line-soft);
+              border-radius:10px;padding:10px 14px;
+            "></div>
+          </div>
+
+          <!-- Replacement log -->
+          <div>
+            <div style="font-size:12px;color:var(--muted);margin-bottom:6px;font-family:var(--mono);">Replacement log</div>
+            <div id="patcherLog" style="
+              font-size:12px;font-family:var(--mono);
+              background:var(--bg-elev);border:1px solid var(--line-soft);
+              border-radius:10px;padding:10px 14px;
+              max-height:160px;overflow-y:auto;
+              display:flex;flex-direction:column;gap:3px;
+            "></div>
+          </div>
+
+        </div>
+      </section>
+    </div>
+
     <div class="footer-note">Polling every 300 ms. UI keeps recent events in memory and derives aggregate counters client-side.</div>
   </div>
 
   <script>
     const API_BASE = 'http://127.0.0.1:18480';
+
+    const SOUNDFONT_DATA = {"0":{"name":"Soundfont_0","instruments":{"0":{"n":"INST_0","mid":"StepGround"},"1":{"n":"INST_1","mid":"StepSand"},"2":{"n":"INST_2","mid":"StepRock"},"3":{"n":"INST_3","mid":"StepJabuJabu"},"4":{"n":"INST_4","mid":"StepWater"},"5":{"n":"INST_5","mid":"StepCarpet"},"6":{"n":"INST_6","mid":"StepThickCarpet"},"7":{"n":"INST_7","mid":"StepTallGrass"},"11":{"n":"INST_11","mid":"StepWood"},"8":{"n":"INST_8","mid":"SynthPadSting"},"9":{"n":"INST_9","mid":"SmallSplash"},"10":{"n":"INST_10","mid":"CrunchyDrop"},"12":{"n":"INST_12","mid":"SlidingBlock"},"13":{"n":"INST_13","mid":"BootsSliding"},"14":{"n":"INST_14","mid":"HeavySlide"},"16":{"n":"INST_16","mid":"HighStatic"},"17":{"n":"INST_17","mid":"DistortedStatic"},"18":{"n":"INST_18","mid":"HeavyStatic"},"19":{"n":"INST_19","mid":"LargeWaterSplash"},"20":{"n":"INST_20","mid":"Swimming"},"21":{"n":"INST_21","mid":"StoneDoof","hi":"Gunshot"},"22":{"n":"INST_22","mid":"StepWoodenBridge"},"23":{"n":"INST_23","mid":"StepFire"},"25":{"n":"INST_25","mid":"StepIce"},"104":{"n":"INST_104","mid":"SAMPLE_0_44"},"15":{"n":"INST_15","mid":"SAMPLE_0_45","hi":"Howling"},"102":{"n":"INST_102","mid":"Timpani"},"105":{"n":"INST_105","mid":"SAMPLE_0_46"},"106":{"n":"INST_106","mid":"SAMPLE_0_47","hi":"Gulp"},"111":{"n":"INST_111","mid":"SAMPLE_0_48"},"26":{"n":"INST_26","mid":"MetalClink","hi":"SwordStrike"},"27":{"n":"INST_27","mid":"Whish"},"28":{"n":"INST_28","mid":"SheatheSword"},"29":{"n":"INST_29","mid":"DrawSword"},"30":{"n":"INST_30","mid":"AirSwish"},"31":{"n":"INST_31","mid":"AirWhistle"},"33":{"n":"INST_33","mid":"SAMPLE_0_55","hi":"BowstringTwang"},"32":{"n":"INST_32","mid":"SwordStrikingMetalShield"},"34":{"n":"INST_34","mid":"MovingMetalChain","hi":"SAMPLE_0_72"},"35":{"n":"INST_35","mid":"SAMPLE_0_58","hi":"BombchuMotor"},"36":{"n":"INST_36","mid":"HeavyThump"},"91":{"n":"INST_91","mid":"Rupee"},"52":{"n":"INST_52","mid":"OcarinaLooped"},"53":{"n":"INST_53","mid":"OcarinaLooped"},"37":{"n":"INST_37","mid":"EggHatching"},"38":{"n":"INST_38","mid":"ArrowThunkinWood"},"39":{"n":"INST_39","mid":"AirWhoosh"},"40":{"n":"INST_40","mid":"BrokenWood"},"41":{"n":"INST_41","mid":"WhipSnap","hi":"PoppingCork"},"42":{"n":"INST_42","mid":"BuzzingSynth"},"43":{"n":"INST_43","mid":"SoftThump","hi":"SAMPLE_0_73"},"44":{"n":"INST_44","mid":"EyeofTruth","hi":"DramaticSwoosh"},"45":{"n":"INST_45","mid":"SAMPLE_0_75","hi":"ClosingWoodenDoor"},"47":{"n":"INST_47","mid":"Explosion1"},"48":{"n":"INST_48","mid":"Gallop"},"50":{"n":"INST_50","mid":"HorseNeigh","hi":"HorseSnort"},"51":{"n":"INST_51","mid":"FlowingCreek","hi":"RushingWaterfall"},"54":{"n":"INST_54","mid":"MechanicallyShiftingStone","hi":"MetalDoor"},"55":{"n":"INST_55","mid":"RollingBoulder"},"56":{"n":"INST_56","mid":"SAMPLE_0_84","hi":"SAMPLE_0_135"},"57":{"n":"INST_57","mid":"RetractingMetalChain"},"58":{"n":"INST_58","mid":"RelaxedCuccoClucks"},"95":{"n":"INST_95","mid":"SAMPLE_0_111"},"59":{"n":"INST_59","mid":"StoneStrike"},"61":{"n":"INST_61","mid":"CuccoCrows","hi":"WolfHowl"},"62":{"n":"INST_62","mid":"WaterSplish"},"63":{"n":"INST_63","mid":"WoodenStrike","hi":"ClatteringSpear"},"64":{"n":"INST_64","mid":"FlyingFairy"},"65":{"n":"INST_65","mid":"SettledStoneBlock"},"66":{"n":"INST_66","mid":"SAMPLE_0_93","hi":"CreakingWood"},"67":{"n":"INST_67","mid":"Ignition"},"68":{"n":"INST_68","mid":"WarpCircleAmbience"},"69":{"n":"INST_69","mid":"FairyMagic"},"70":{"n":"INST_70","mid":"GanonsElectricalCharge","hi":"BrokenPottery"},"71":{"n":"INST_71","mid":"WaterDrips"},"72":{"n":"INST_72","mid":"UnderwaterBubbles"},"73":{"n":"INST_73","mid":"SAMPLE_0_100","hi":"CowMoo"},"74":{"n":"INST_74","mid":"SAMPLE_0_390","hi":"SAMPLE_0_16"},"75":{"n":"INST_75","mid":"HeavyPlatformRotating"},"76":{"n":"INST_76","mid":"LightRockSlam"},"77":{"n":"INST_77","mid":"SAMPLE_0_391","hi":"MechanicalRampUp"},"78":{"n":"INST_78","mid":"FlappingCloak","hi":"RustlingLargeWings"},"60":{"n":"INST_60","mid":"HowlingWindShort"},"79":{"n":"INST_79","mid":"SAMPLE_0_104","hi":"ShatteredGlass"},"80":{"n":"INST_80","mid":"ClothRipping"},"81":{"n":"INST_81","mid":"SAMPLE_0_398","hi":"DogYip"},"46":{"n":"INST_46","mid":"SAMPLE_0_107","hi":"ShimmeringTreasure"},"99":{"n":"INST_99","mid":"SAMPLE_0_115","hi":"SAMPLE_0_115"},"100":{"n":"INST_100","mid":"SAMPLE_0_116"},"101":{"n":"INST_101","mid":"SAMPLE_0_117"},"103":{"n":"INST_103","mid":"SAMPLE_0_118","hi":"SAMPLE_0_129"},"107":{"n":"INST_107","mid":"SAMPLE_0_119","hi":"SAMPLE_0_120"},"108":{"n":"INST_108","mid":"SAMPLE_0_121","hi":"SAMPLE_0_130"},"109":{"n":"INST_109","mid":"SAMPLE_0_123","lo":"SAMPLE_0_122","hi":"SAMPLE_0_124"},"110":{"n":"INST_110","mid":"SAMPLE_0_125","hi":"ChildLinkGlug"},"97":{"n":"INST_97","mid":"SAMPLE_0_126","hi":"SAMPLE_0_131"},"24":{"n":"INST_24","mid":"SAMPLE_0_127","hi":"SAMPLE_0_128"},"114":{"n":"INST_114","mid":"SAMPLE_0_389"},"115":{"n":"INST_115","mid":"PianoSoft"},"116":{"n":"INST_116","mid":"SAMPLE_0_387"},"96":{"n":"INST_96","mid":"SAMPLE_0_388"},"117":{"n":"INST_117","mid":"SAMPLE_0_385"},"118":{"n":"INST_118","mid":"SAMPLE_0_132"},"121":{"n":"INST_121","mid":"RustlingThicket"},"84":{"n":"INST_84","mid":"DialogueContinueHarp"},"87":{"n":"INST_87","mid":"DongFailedLearning","hi":"ClangingBells"},"88":{"n":"INST_88","mid":"Whistle"},"89":{"n":"INST_89","mid":"Harp1"},"90":{"n":"INST_90","mid":"ZTarget","hi":"EnemyTargetLockOn"},"85":{"n":"INST_85","mid":"Malon"},"86":{"n":"INST_86","mid":"SAMPLE_0_128"},"83":{"n":"INST_83","mid":"Accordion"},"82":{"n":"INST_82","mid":"PersonWhistling"},"113":{"n":"INST_113","mid":"SAMPLE_0_378"},"92":{"n":"INST_92","mid":"SAMPLE_0_381"},"93":{"n":"INST_93","mid":"SAMPLE_0_382"},"94":{"n":"INST_94","mid":"SAMPLE_0_383"},"98":{"n":"INST_98","mid":"SAMPLE_0_145"},"112":{"n":"INST_112","mid":"CrackingEgg"},"119":{"n":"INST_119","mid":"Flute"},"120":{"n":"INST_120","mid":"SAMPLE_0_148"}},"drums":{"0":{"n":"DRUM_0","s":"TamboDrum"},"1":{"n":"DRUM_1","s":"FingerCymbals"},"2":{"n":"DRUM_2","s":"SAMPLE_0_15"},"3":{"n":"DRUM_3","s":"SAMPLE_0_15"},"4":{"n":"DRUM_4","s":"ChildLinkGasp1"},"5":{"n":"DRUM_5","s":"ChildLinkGasp2"},"6":{"n":"DRUM_6","s":"SAMPLE_0_213"},"7":{"n":"DRUM_7","s":"SAMPLE_0_176"},"8":{"n":"DRUM_8","s":"SAMPLE_0_133"},"9":{"n":"DRUM_9","s":"SAMPLE_0_134"},"10":{"n":"DRUM_10","s":"SAMPLE_0_136"},"11":{"n":"DRUM_11","s":"SAMPLE_0_136"},"12":{"n":"DRUM_12","s":"SAMPLE_0_136"},"13":{"n":"DRUM_13","s":"SAMPLE_0_137"},"14":{"n":"DRUM_14","s":"SAMPLE_0_137"},"15":{"n":"DRUM_15","s":"SAMPLE_0_137"}},"sfx":{"0":{"n":"EFFECT_0","s":"AdultLinkAttack1"},"1":{"n":"EFFECT_1","s":"AdultLinkAttack2"},"2":{"n":"EFFECT_2","s":"AdultLinkAttack3"},"3":{"n":"EFFECT_3","s":"AdultLinkAttack4"},"4":{"n":"EFFECT_4","s":"AdultLinkStrongAttack1"},"5":{"n":"EFFECT_5","s":"AdultLinkStrongAttack2"},"6":{"n":"EFFECT_6","s":"SAMPLE_0_162"},"7":{"n":"EFFECT_7","s":"SAMPLE_0_164"},"8":{"n":"EFFECT_8","s":"SAMPLE_0_165"},"9":{"n":"EFFECT_9","s":"SAMPLE_0_167"},"10":{"n":"EFFECT_10","s":"SAMPLE_0_169"},"11":{"n":"EFFECT_11","s":"SAMPLE_0_171"},"12":{"n":"EFFECT_12","s":"SAMPLE_0_173"},"13":{"n":"EFFECT_13","s":"SAMPLE_0_175"},"14":{"n":"EFFECT_14","s":"SAMPLE_0_177"},"15":{"n":"EFFECT_15","s":"AdultLinkFalling1"},"16":{"n":"EFFECT_16","s":"AdultLinkFalling2"},"17":{"n":"EFFECT_17","s":"AdultLinkFalling2"},"18":{"n":"EFFECT_18","s":"SAMPLE_0_182"},"19":{"n":"EFFECT_19","s":"SAMPLE_0_184"},"20":{"n":"EFFECT_20","s":"SAMPLE_0_225"},"21":{"n":"EFFECT_21","s":"SAMPLE_0_148"},"22":{"n":"EFFECT_22","s":"SAMPLE_0_148"},"23":{"n":"EFFECT_23","s":"SAMPLE_0_186"},"24":{"n":"EFFECT_24","s":"SAMPLE_0_188"},"25":{"n":"EFFECT_25","s":"SAMPLE_0_163"},"26":{"n":"EFFECT_26","s":"AdultLinkHup"},"27":{"n":"EFFECT_27","s":"AdultLinkGasp1"},"28":{"n":"EFFECT_28","s":"SAMPLE_0_193"},"29":{"n":"EFFECT_29","s":"SAMPLE_0_194"},"30":{"n":"EFFECT_30","s":"SAMPLE_0_195"},"31":{"n":"EFFECT_31","s":"SAMPLE_0_196"},"32":{"n":"EFFECT_32","s":"ChildLinkStrongAttack1"},"33":{"n":"EFFECT_33","s":"ChildLinkStrongAttack2"},"34":{"n":"EFFECT_34","s":"SAMPLE_0_203"},"35":{"n":"EFFECT_35","s":"SAMPLE_0_205"},"36":{"n":"EFFECT_36","s":"SAMPLE_0_206"},"37":{"n":"EFFECT_37","s":"SAMPLE_0_207"},"38":{"n":"EFFECT_38","s":"SAMPLE_0_208"},"39":{"n":"EFFECT_39","s":"SAMPLE_0_209"},"40":{"n":"EFFECT_40","s":"SAMPLE_0_210"},"41":{"n":"EFFECT_41","s":"SAMPLE_0_211"},"42":{"n":"EFFECT_42","s":"SAMPLE_0_212"},"43":{"n":"EFFECT_43","s":"SAMPLE_0_213"},"44":{"n":"EFFECT_44","s":"SAMPLE_0_214"},"45":{"n":"EFFECT_45","s":"ChildLinkGasp1"},"46":{"n":"EFFECT_46","s":"ChildLinkGasp2"},"47":{"n":"EFFECT_47","s":"SAMPLE_0_217"},"48":{"n":"EFFECT_48","s":"SAMPLE_0_218"},"49":{"n":"EFFECT_49","s":"SAMPLE_0_223"},"50":{"n":"EFFECT_50","s":"SAMPLE_0_204"},"51":{"n":"EFFECT_51","s":"ChildLinkGlug"},"52":{"n":"EFFECT_52","s":"SAMPLE_0_220"},"53":{"n":"EFFECT_53","s":"SAMPLE_0_197"},"54":{"n":"EFFECT_54","s":"SAMPLE_0_198"},"55":{"n":"EFFECT_55","s":"SAMPLE_0_188"},"56":{"n":"EFFECT_56","s":"SAMPLE_0_188"},"57":{"n":"","s":""},"58":{"n":"","s":""},"59":{"n":"","s":""},"60":{"n":"EFFECT_60","s":"SAMPLE_0_188"},"61":{"n":"EFFECT_61","s":"SAMPLE_0_188"},"62":{"n":"EFFECT_62","s":"ChildLinkChargeUpUnused"},"63":{"n":"EFFECT_63","s":"ChildLinkCastAttackSpell"},"64":{"n":"EFFECT_64","s":"SAMPLE_0_225"},"65":{"n":"EFFECT_65","s":"SAMPLE_0_226"},"66":{"n":"EFFECT_66","s":"SAMPLE_0_227"},"67":{"n":"EFFECT_67","s":"ChildLinkShivers"},"68":{"n":"","s":""},"69":{"n":"EFFECT_69","s":"ChildLinkSneeze"},"70":{"n":"EFFECT_70","s":"ChildLinkGrunt"},"71":{"n":"EFFECT_71","s":"ChildLinkMoansFromHeat"},"72":{"n":"EFFECT_72","s":"ChildLinkAwakeningGrunt"},"73":{"n":"EFFECT_73","s":"ChildLinkWipingOffSweat"},"74":{"n":"EFFECT_74","s":"ChildLinkYawnStarts"},"75":{"n":"EFFECT_75","s":"ChildLinkYawnandStretch"},"76":{"n":"EFFECT_76","s":"ChildLinkStretchRefreshingly"},"77":{"n":"EFFECT_77","s":"SAMPLE_0_190"},"78":{"n":"EFFECT_78","s":"SAMPLE_0_191"},"79":{"n":"EFFECT_79","s":"SAMPLE_0_192"},"80":{"n":"EFFECT_80","s":"SAMPLE_0_192"},"81":{"n":"EFFECT_81","s":"SAMPLE_0_192"},"82":{"n":"EFFECT_82","s":"SAMPLE_0_192"},"83":{"n":"EFFECT_83","s":"SAMPLE_0_192"},"84":{"n":"EFFECT_84","s":"SAMPLE_0_192"},"85":{"n":"EFFECT_85","s":"SAMPLE_0_192"},"86":{"n":"EFFECT_86","s":"SAMPLE_0_192"},"87":{"n":"EFFECT_87","s":"SAMPLE_0_192"},"88":{"n":"EFFECT_88","s":"SAMPLE_0_192"},"89":{"n":"","s":""},"90":{"n":"","s":""},"91":{"n":"","s":""},"92":{"n":"","s":""},"93":{"n":"EFFECT_93","s":"IngoYowls"},"94":{"n":"EFFECT_94","s":"IngoExclaims"},"95":{"n":"EFFECT_95","s":"IngoHyeaaaaugh"},"96":{"n":"EFFECT_96","s":"IngoHyah"},"97":{"n":"EFFECT_97","s":"GreatFairyLaughter"},"98":{"n":"EFFECT_98","s":"GreatFairyTitters"},"99":{"n":"EFFECT_99","s":"SAMPLE_0_404"},"100":{"n":"EFFECT_100","s":"SAMPLE_0_405"},"101":{"n":"EFFECT_101","s":"SAMPLE_0_406"},"102":{"n":"EFFECT_102","s":"SAMPLE_0_407"},"103":{"n":"EFFECT_103","s":"SAMPLE_0_407"},"104":{"n":"","s":""},"105":{"n":"","s":""},"106":{"n":"","s":""},"107":{"n":"","s":""},"108":{"n":"","s":""},"109":{"n":"","s":""},"110":{"n":"","s":""},"111":{"n":"","s":""},"112":{"n":"","s":""},"113":{"n":"","s":""},"114":{"n":"","s":""},"115":{"n":"","s":""},"116":{"n":"","s":""},"117":{"n":"","s":""},"118":{"n":"","s":""},"119":{"n":"","s":""},"120":{"n":"","s":""},"121":{"n":"","s":""},"122":{"n":"","s":""},"123":{"n":"","s":""},"124":{"n":"","s":""},"125":{"n":"","s":""},"126":{"n":"","s":""},"127":{"n":"","s":""},"128":{"n":"","s":""},"129":{"n":"EFFECT_129","s":"SAMPLE_0_239"},"130":{"n":"EFFECT_130","s":"SAMPLE_0_240"},"131":{"n":"","s":""},"132":{"n":"","s":""},"133":{"n":"EFFECT_133","s":"SAMPLE_0_245"},"134":{"n":"EFFECT_134","s":"SAMPLE_0_245"},"135":{"n":"EFFECT_135","s":"SAMPLE_0_245"},"136":{"n":"EFFECT_136","s":"SAMPLE_0_189"},"137":{"n":"EFFECT_137","s":"SAMPLE_0_224"},"138":{"n":"EFFECT_138","s":"SAMPLE_0_201"},"139":{"n":"EFFECT_139","s":"SAMPLE_0_202"},"140":{"n":"EFFECT_140","s":"SAMPLE_0_399"},"141":{"n":"EFFECT_141","s":"SAMPLE_0_400"},"142":{"n":"EFFECT_142","s":"SAMPLE_0_401"},"143":{"n":"EFFECT_143","s":"SAMPLE_0_402"},"144":{"n":"","s":""},"145":{"n":"","s":""},"146":{"n":"","s":""},"147":{"n":"","s":""},"148":{"n":"","s":""},"149":{"n":"","s":""},"150":{"n":"","s":""},"151":{"n":"","s":""},"152":{"n":"","s":""},"153":{"n":"","s":""},"154":{"n":"","s":""},"155":{"n":"","s":""},"156":{"n":"","s":""},"157":{"n":"","s":""},"158":{"n":"","s":""},"159":{"n":"","s":""},"160":{"n":"","s":""},"161":{"n":"","s":""},"162":{"n":"","s":""},"163":{"n":"","s":""},"164":{"n":"","s":""},"165":{"n":"","s":""},"166":{"n":"","s":""},"167":{"n":"","s":""},"168":{"n":"","s":""},"169":{"n":"","s":""},"170":{"n":"","s":""},"171":{"n":"","s":""},"172":{"n":"","s":""},"173":{"n":"","s":""},"174":{"n":"","s":""},"175":{"n":"","s":""},"176":{"n":"","s":""},"177":{"n":"","s":""},"178":{"n":"","s":""},"179":{"n":"","s":""},"180":{"n":"","s":""},"181":{"n":"","s":""},"182":{"n":"","s":""},"183":{"n":"","s":""},"184":{"n":"","s":""},"185":{"n":"","s":""},"186":{"n":"","s":""},"187":{"n":"","s":""},"188":{"n":"","s":""},"189":{"n":"","s":""},"190":{"n":"","s":""},"191":{"n":"","s":""},"192":{"n":"EFFECT_192","s":"SAMPLE_0_193"},"193":{"n":"EFFECT_193","s":"SAMPLE_0_194"},"194":{"n":"EFFECT_194","s":"SAMPLE_0_195"},"195":{"n":"EFFECT_195","s":"SAMPLE_0_196"},"196":{"n":"EFFECT_196","s":"ChildLinkStrongAttack1"},"197":{"n":"EFFECT_197","s":"ChildLinkStrongAttack2"},"198":{"n":"EFFECT_198","s":"SAMPLE_0_203"},"199":{"n":"EFFECT_199","s":"SAMPLE_0_205"},"200":{"n":"EFFECT_200","s":"SAMPLE_0_206"},"201":{"n":"EFFECT_201","s":"SAMPLE_0_207"},"202":{"n":"EFFECT_202","s":"SAMPLE_0_208"},"203":{"n":"EFFECT_203","s":"SAMPLE_0_209"},"204":{"n":"EFFECT_204","s":"SAMPLE_0_210"},"205":{"n":"EFFECT_205","s":"SAMPLE_0_211"},"206":{"n":"EFFECT_206","s":"SAMPLE_0_212"},"207":{"n":"EFFECT_207","s":"SAMPLE_0_213"},"208":{"n":"EFFECT_208","s":"SAMPLE_0_214"},"209":{"n":"EFFECT_209","s":"ChildLinkGasp1"},"210":{"n":"EFFECT_210","s":"ChildLinkGasp2"},"211":{"n":"EFFECT_211","s":"SAMPLE_0_217"},"212":{"n":"EFFECT_212","s":"SAMPLE_0_225"},"213":{"n":"EFFECT_213","s":"SAMPLE_0_201"},"214":{"n":"EFFECT_214","s":"SAMPLE_0_202"},"215":{"n":"EFFECT_215","s":"SAMPLE_0_218"},"216":{"n":"EFFECT_216","s":"SAMPLE_0_223"},"217":{"n":"EFFECT_217","s":"SAMPLE_0_204"},"218":{"n":"EFFECT_218","s":"SAMPLE_0_197"},"219":{"n":"EFFECT_219","s":"SAMPLE_0_198"},"220":{"n":"EFFECT_220","s":"SAMPLE_0_193"},"221":{"n":"EFFECT_221","s":"SAMPLE_0_194"},"222":{"n":"EFFECT_222","s":"SAMPLE_0_195"},"223":{"n":"EFFECT_223","s":"SAMPLE_0_196"},"224":{"n":"EFFECT_224","s":"ChildLinkStrongAttack1"},"225":{"n":"EFFECT_225","s":"ChildLinkStrongAttack2"},"226":{"n":"EFFECT_226","s":"SAMPLE_0_203"},"227":{"n":"EFFECT_227","s":"SAMPLE_0_205"},"228":{"n":"EFFECT_228","s":"SAMPLE_0_206"},"229":{"n":"EFFECT_229","s":"SAMPLE_0_207"},"230":{"n":"EFFECT_230","s":"SAMPLE_0_208"},"231":{"n":"EFFECT_231","s":"SAMPLE_0_209"},"232":{"n":"EFFECT_232","s":"SAMPLE_0_210"},"233":{"n":"EFFECT_233","s":"SAMPLE_0_211"},"234":{"n":"EFFECT_234","s":"SAMPLE_0_212"},"235":{"n":"EFFECT_235","s":"SAMPLE_0_213"},"236":{"n":"EFFECT_236","s":"SAMPLE_0_214"},"237":{"n":"EFFECT_237","s":"ChildLinkGasp1"},"238":{"n":"EFFECT_238","s":"ChildLinkGasp2"},"239":{"n":"EFFECT_239","s":"SAMPLE_0_217"},"240":{"n":"EFFECT_240","s":"SAMPLE_0_218"},"241":{"n":"EFFECT_241","s":"SAMPLE_0_223"},"242":{"n":"EFFECT_242","s":"SAMPLE_0_204"},"243":{"n":"EFFECT_243","s":"ChildLinkGlug"},"244":{"n":"EFFECT_244","s":"SAMPLE_0_220"},"245":{"n":"EFFECT_245","s":"SAMPLE_0_197"},"246":{"n":"EFFECT_246","s":"SAMPLE_0_198"},"247":{"n":"EFFECT_247","s":"ChildLinkGlug"},"248":{"n":"EFFECT_248","s":"SAMPLE_0_220"},"249":{"n":"EFFECT_249","s":"SAMPLE_0_225"},"250":{"n":"EFFECT_250","s":"SAMPLE_0_226"},"251":{"n":"EFFECT_251","s":"SAMPLE_0_227"},"252":{"n":"EFFECT_252","s":"ChildLinkChargeUpUnused"},"253":{"n":"EFFECT_253","s":"ChildLinkCastAttackSpell"},"254":{"n":"EFFECT_254","s":"ChildLinkChargeUpUnused"},"255":{"n":"EFFECT_255","s":"ChildLinkCastAttackSpell"},"256":{"n":"EFFECT_256","s":"SAMPLE_0_150"},"257":{"n":"EFFECT_257","s":"SAMPLE_0_152"},"258":{"n":"EFFECT_258","s":"SAMPLE_0_154"},"259":{"n":"EFFECT_259","s":"SAMPLE_0_156"},"260":{"n":"EFFECT_260","s":"SAMPLE_0_160"},"261":{"n":"EFFECT_261","s":"SAMPLE_0_162"},"262":{"n":"EFFECT_262","s":"SAMPLE_0_163"},"263":{"n":"EFFECT_263","s":"SAMPLE_0_165"},"264":{"n":"EFFECT_264","s":"SAMPLE_0_166"},"265":{"n":"EFFECT_265","s":"SAMPLE_0_168"},"266":{"n":"EFFECT_266","s":"SAMPLE_0_170"},"267":{"n":"EFFECT_267","s":"SAMPLE_0_172"},"268":{"n":"EFFECT_268","s":"SAMPLE_0_174"},"269":{"n":"EFFECT_269","s":"SAMPLE_0_176"},"270":{"n":"EFFECT_270","s":"SAMPLE_0_178"},"271":{"n":"EFFECT_271","s":"SAMPLE_0_180"},"272":{"n":"EFFECT_272","s":"SAMPLE_0_180"},"273":{"n":"EFFECT_273","s":"SAMPLE_0_182"},"274":{"n":"EFFECT_274","s":"SAMPLE_0_183"},"275":{"n":"EFFECT_275","s":"SAMPLE_0_185"},"276":{"n":"EFFECT_276","s":"SAMPLE_0_188"},"277":{"n":"EFFECT_277","s":"SAMPLE_0_148"},"278":{"n":"EFFECT_278","s":"SAMPLE_0_148"},"279":{"n":"EFFECT_279","s":"SAMPLE_0_187"},"280":{"n":"EFFECT_280","s":"SAMPLE_0_189"},"281":{"n":"EFFECT_281","s":"SAMPLE_0_164"},"282":{"n":"EFFECT_282","s":"AdultLinkHup"},"283":{"n":"EFFECT_283","s":"AdultLinkGasp1"},"284":{"n":"EFFECT_284","s":"SAMPLE_0_224"},"285":{"n":"","s":""},"286":{"n":"","s":""},"287":{"n":"","s":""},"288":{"n":"","s":""},"289":{"n":"","s":""},"290":{"n":"","s":""},"291":{"n":"","s":""},"292":{"n":"","s":""},"293":{"n":"","s":""},"294":{"n":"","s":""},"295":{"n":"","s":""},"296":{"n":"","s":""},"297":{"n":"","s":""},"298":{"n":"","s":""},"299":{"n":"","s":""},"300":{"n":"","s":""},"301":{"n":"","s":""},"302":{"n":"","s":""},"303":{"n":"","s":""},"304":{"n":"","s":""},"305":{"n":"","s":""},"306":{"n":"","s":""},"307":{"n":"","s":""},"308":{"n":"","s":""},"309":{"n":"","s":""},"310":{"n":"","s":""},"311":{"n":"","s":""},"312":{"n":"","s":""},"313":{"n":"","s":""},"314":{"n":"","s":""},"315":{"n":"","s":""},"316":{"n":"","s":""},"317":{"n":"","s":""},"318":{"n":"","s":""},"319":{"n":"","s":""},"320":{"n":"EFFECT_320","s":"SAMPLE_0_246"},"321":{"n":"EFFECT_321","s":"SAMPLE_0_247"},"322":{"n":"EFFECT_322","s":"SAMPLE_0_248"},"323":{"n":"EFFECT_323","s":"SAMPLE_0_249"},"324":{"n":"EFFECT_324","s":"SAMPLE_0_250"},"325":{"n":"EFFECT_325","s":"SAMPLE_0_251"},"326":{"n":"EFFECT_326","s":"SAMPLE_0_252"},"327":{"n":"EFFECT_327","s":"SAMPLE_0_253"},"328":{"n":"EFFECT_328","s":"SAMPLE_0_254"},"329":{"n":"EFFECT_329","s":"SAMPLE_0_255"},"330":{"n":"EFFECT_330","s":"SAMPLE_0_256"},"331":{"n":"EFFECT_331","s":"SAMPLE_0_257"},"332":{"n":"EFFECT_332","s":"SAMPLE_0_258"},"333":{"n":"EFFECT_333","s":"SAMPLE_0_259"},"334":{"n":"EFFECT_334","s":"SAMPLE_0_260"},"335":{"n":"EFFECT_335","s":"SAMPLE_0_261"},"336":{"n":"EFFECT_336","s":"SAMPLE_0_262"},"337":{"n":"EFFECT_337","s":"SAMPLE_0_263"},"338":{"n":"EFFECT_338","s":"SAMPLE_0_264"},"339":{"n":"EFFECT_339","s":"SAMPLE_0_265"},"340":{"n":"EFFECT_340","s":"SAMPLE_0_266"},"341":{"n":"EFFECT_341","s":"SAMPLE_0_267"},"342":{"n":"EFFECT_342","s":"SAMPLE_0_268"},"343":{"n":"EFFECT_343","s":"SAMPLE_0_269"},"344":{"n":"EFFECT_344","s":"SAMPLE_0_270"},"345":{"n":"EFFECT_345","s":"SAMPLE_0_271"},"346":{"n":"EFFECT_346","s":"SAMPLE_0_272"},"347":{"n":"EFFECT_347","s":"SAMPLE_0_273"},"348":{"n":"EFFECT_348","s":"SAMPLE_0_274"},"349":{"n":"EFFECT_349","s":"SAMPLE_0_275"},"350":{"n":"EFFECT_350","s":"SAMPLE_0_276"},"351":{"n":"EFFECT_351","s":"SAMPLE_0_277"},"352":{"n":"EFFECT_352","s":"SAMPLE_0_278"},"353":{"n":"EFFECT_353","s":"SAMPLE_0_279"},"354":{"n":"EFFECT_354","s":"SAMPLE_0_280"},"355":{"n":"EFFECT_355","s":"SAMPLE_0_281"},"356":{"n":"EFFECT_356","s":"SAMPLE_0_282"},"357":{"n":"EFFECT_357","s":"SAMPLE_0_283"},"358":{"n":"EFFECT_358","s":"SAMPLE_0_286"},"359":{"n":"EFFECT_359","s":"SAMPLE_0_287"},"360":{"n":"EFFECT_360","s":"SAMPLE_0_288"},"361":{"n":"EFFECT_361","s":"SAMPLE_0_289"},"362":{"n":"EFFECT_362","s":"SAMPLE_0_290"},"363":{"n":"EFFECT_363","s":"SAMPLE_0_291"},"364":{"n":"EFFECT_364","s":"SAMPLE_0_292"},"365":{"n":"EFFECT_365","s":"SAMPLE_0_293"},"366":{"n":"EFFECT_366","s":"SAMPLE_0_294"},"367":{"n":"EFFECT_367","s":"SAMPLE_0_295"},"368":{"n":"EFFECT_368","s":"SAMPLE_0_297"},"369":{"n":"EFFECT_369","s":"SAMPLE_0_298"},"370":{"n":"EFFECT_370","s":"SAMPLE_0_299"},"371":{"n":"EFFECT_371","s":"SAMPLE_0_300"},"372":{"n":"EFFECT_372","s":"SAMPLE_0_301"},"373":{"n":"EFFECT_373","s":"SAMPLE_0_302"},"374":{"n":"EFFECT_374","s":"SAMPLE_0_303"},"375":{"n":"EFFECT_375","s":"SAMPLE_0_304"},"376":{"n":"EFFECT_376","s":"SAMPLE_0_305"},"377":{"n":"EFFECT_377","s":"SAMPLE_0_284"},"378":{"n":"EFFECT_378","s":"SAMPLE_0_285"},"379":{"n":"EFFECT_379","s":"SAMPLE_0_296"},"380":{"n":"","s":""},"381":{"n":"","s":""},"382":{"n":"","s":""},"383":{"n":"","s":""},"384":{"n":"EFFECT_384","s":"SAMPLE_0_306"},"385":{"n":"EFFECT_385","s":"SAMPLE_0_307"},"386":{"n":"","s":""},"387":{"n":"EFFECT_387","s":"SAMPLE_0_308"},"388":{"n":"EFFECT_388","s":"SAMPLE_0_309"},"389":{"n":"EFFECT_389","s":"SAMPLE_0_310"},"390":{"n":"EFFECT_390","s":"SAMPLE_0_311"},"391":{"n":"EFFECT_391","s":"SAMPLE_0_312"},"392":{"n":"EFFECT_392","s":"SAMPLE_0_313"},"393":{"n":"EFFECT_393","s":"SAMPLE_0_314"},"394":{"n":"EFFECT_394","s":"SAMPLE_0_315"},"395":{"n":"EFFECT_395","s":"SAMPLE_0_316"},"396":{"n":"EFFECT_396","s":"SAMPLE_0_317"},"397":{"n":"EFFECT_397","s":"SAMPLE_0_319"},"398":{"n":"EFFECT_398","s":"SAMPLE_0_320"},"399":{"n":"EFFECT_399","s":"SAMPLE_0_321"},"400":{"n":"EFFECT_400","s":"SAMPLE_0_322"},"401":{"n":"EFFECT_401","s":"SAMPLE_0_323"},"402":{"n":"EFFECT_402","s":"SAMPLE_0_324"},"403":{"n":"EFFECT_403","s":"SAMPLE_0_325"},"404":{"n":"EFFECT_404","s":"SAMPLE_0_326"},"405":{"n":"EFFECT_405","s":"SAMPLE_0_327"},"406":{"n":"EFFECT_406","s":"SAMPLE_0_328"},"407":{"n":"EFFECT_407","s":"SAMPLE_0_329"},"408":{"n":"EFFECT_408","s":"SAMPLE_0_330"},"409":{"n":"EFFECT_409","s":"SAMPLE_0_331"},"410":{"n":"EFFECT_410","s":"SAMPLE_0_332"},"411":{"n":"EFFECT_411","s":"SAMPLE_0_333"},"412":{"n":"EFFECT_412","s":"SAMPLE_0_334"},"413":{"n":"EFFECT_413","s":"SAMPLE_0_335"},"414":{"n":"EFFECT_414","s":"SAMPLE_0_336"},"415":{"n":"EFFECT_415","s":"SAMPLE_0_353"},"416":{"n":"EFFECT_416","s":"SAMPLE_0_318"},"417":{"n":"EFFECT_417","s":"SAMPLE_0_337"},"418":{"n":"EFFECT_418","s":"SAMPLE_0_338"},"419":{"n":"EFFECT_419","s":"SAMPLE_0_339"},"420":{"n":"EFFECT_420","s":"SAMPLE_0_340"},"421":{"n":"EFFECT_421","s":"SAMPLE_0_341"},"422":{"n":"EFFECT_422","s":"SAMPLE_0_342"},"423":{"n":"EFFECT_423","s":"SAMPLE_0_343"},"424":{"n":"EFFECT_424","s":"SAMPLE_0_344"},"425":{"n":"EFFECT_425","s":"SAMPLE_0_345"},"426":{"n":"EFFECT_426","s":"SAMPLE_0_346"},"427":{"n":"EFFECT_427","s":"SAMPLE_0_347"},"428":{"n":"EFFECT_428","s":"SAMPLE_0_348"},"429":{"n":"EFFECT_429","s":"SAMPLE_0_349"},"430":{"n":"EFFECT_430","s":"SAMPLE_0_350"},"431":{"n":"EFFECT_431","s":"SAMPLE_0_351"},"432":{"n":"EFFECT_432","s":"SAMPLE_0_352"},"433":{"n":"EFFECT_433","s":"SAMPLE_0_354"},"434":{"n":"EFFECT_434","s":"SAMPLE_0_355"},"435":{"n":"EFFECT_435","s":"SAMPLE_0_356"},"436":{"n":"EFFECT_436","s":"SAMPLE_0_357"},"437":{"n":"EFFECT_437","s":"SAMPLE_0_358"},"438":{"n":"EFFECT_438","s":"SAMPLE_0_359"},"439":{"n":"EFFECT_439","s":"SAMPLE_0_360"},"440":{"n":"EFFECT_440","s":"SAMPLE_0_361"},"441":{"n":"EFFECT_441","s":"SAMPLE_0_362"},"442":{"n":"EFFECT_442","s":"SAMPLE_0_363"},"443":{"n":"EFFECT_443","s":"SAMPLE_0_364"},"444":{"n":"EFFECT_444","s":"SAMPLE_0_365"},"445":{"n":"EFFECT_445","s":"SAMPLE_0_366"},"446":{"n":"EFFECT_446","s":"SAMPLE_0_367"},"447":{"n":"EFFECT_447","s":"SAMPLE_0_368"},"448":{"n":"EFFECT_448","s":"SAMPLE_0_369"},"449":{"n":"EFFECT_449","s":"SAMPLE_0_370"},"450":{"n":"EFFECT_450","s":"SAMPLE_0_371"},"451":{"n":"EFFECT_451","s":"SAMPLE_0_372"},"452":{"n":"","s":""}}},"1":{"name":"Soundfont_1","instruments":{"8":{"n":"INST_8","mid":"HeavyGunshot"},"9":{"n":"INST_9","mid":"SAMPLE_0_398"},"0":{"n":"INST_0","mid":"SAMPLE_0_463"},"2":{"n":"INST_2","mid":"DodongoInhale"},"24":{"n":"INST_24","mid":"Gulp"},"10":{"n":"INST_10","mid":"SAMPLE_0_464"},"11":{"n":"INST_11","mid":"RustlingThicket"},"12":{"n":"INST_12","mid":"CrackingEgg"},"13":{"n":"INST_13","mid":"ResoundingSmash"},"14":{"n":"INST_14","mid":"SAMPLE_0_466"},"17":{"n":"INST_17","mid":"SAMPLE_0_465"},"1":{"n":"INST_1","mid":"CloakingPoe"},"15":{"n":"INST_15","mid":"ChitteringKeese"},"16":{"n":"INST_16","mid":"RustlingLargeWings"},"27":{"n":"INST_27","mid":"GuayHurt"},"18":{"n":"INST_18","mid":"Scritch"},"19":{"n":"INST_19","mid":"GruffVoice"},"21":{"n":"INST_21","mid":"LizalfosTriumphantCry","hi":"LizalfosFootPatter"},"20":{"n":"INST_20","mid":"LizalfosLaughter"},"22":{"n":"INST_22","mid":"DekuScrubCollapses"},"23":{"n":"INST_23","mid":"BrokenSmallPottery"},"28":{"n":"INST_28","mid":"MonstrousGrowl"},"29":{"n":"INST_29","mid":"MoaningPhantomGanon"},"30":{"n":"INST_30","mid":"PhantomGanonLaughing"},"31":{"n":"INST_31","mid":"GerudoScimitarSlash"},"25":{"n":"INST_25","mid":"DekuBabaChomp"},"3":{"n":"INST_3","mid":"Buzzing","hi":"DekuBabaLunge"},"32":{"n":"INST_32","mid":"ElectricBurst"},"33":{"n":"INST_33","mid":"GanonsElectricalCharge"},"34":{"n":"INST_34","mid":"DramaticSwoosh"},"35":{"n":"INST_35","mid":"PhantomGanonInAgony"},"39":{"n":"INST_39","mid":"GoronAndRedeadMoan","hi":"GoronYawn"},"40":{"n":"INST_40","mid":"SAMPLE_0_468"},"42":{"n":"INST_42","mid":"SAMPLE_0_447"},"43":{"n":"INST_43","mid":"GoronInquiring","hi":"GoronRecognizes"},"36":{"n":"INST_36","mid":"LargeWaterSplash"},"37":{"n":"INST_37","mid":"StepWater"},"38":{"n":"INST_38","mid":"Explosion1"},"41":{"n":"INST_41","mid":"UnderwaterBubbles"},"26":{"n":"INST_26","mid":"HowlingWindShort"},"4":{"n":"INST_4","mid":"MetalClink","hi":"BootsSliding"},"82":{"n":"INST_82","mid":"SAMPLE_0_401","hi":"SAMPLE_0_402"},"44":{"n":"INST_44","mid":"WolfHowl","hi":"CawingBird"},"45":{"n":"INST_45","mid":"PhantomGanonAttacks"},"47":{"n":"INST_47","mid":"SAMPLE_0_472"},"48":{"n":"INST_48","mid":"SAMPLE_0_479"},"49":{"n":"INST_49","mid":"SAMPLE_0_470"},"50":{"n":"INST_50","mid":"SAMPLE_0_471"},"51":{"n":"INST_51","mid":"SAMPLE_0_473"},"52":{"n":"INST_52","mid":"SAMPLE_0_474"},"6":{"n":"INST_6","mid":"SAMPLE_0_475"},"59":{"n":"INST_59","mid":"SAMPLE_0_476"},"60":{"n":"INST_60","mid":"SAMPLE_0_477"},"61":{"n":"INST_61","mid":"SAMPLE_0_478"},"53":{"n":"INST_53","mid":"SAMPLE_0_493"},"54":{"n":"INST_54","mid":"SAMPLE_0_494"},"55":{"n":"INST_55","mid":"SAMPLE_0_495"},"56":{"n":"INST_56","mid":"SAMPLE_0_499"},"57":{"n":"INST_57","mid":"SAMPLE_0_496"},"7":{"n":"INST_7","mid":"SAMPLE_0_497"},"58":{"n":"INST_58","mid":"SAMPLE_0_58"},"71":{"n":"INST_71","mid":"SAMPLE_0_498"},"72":{"n":"INST_72","mid":"SAMPLE_0_508"},"73":{"n":"INST_73","mid":"SAMPLE_0_505"},"74":{"n":"INST_74","mid":"SAMPLE_0_506"},"75":{"n":"INST_75","mid":"SAMPLE_0_504"},"76":{"n":"INST_76","mid":"SAMPLE_0_391"},"77":{"n":"INST_77","mid":"DrawSword"},"78":{"n":"INST_78","mid":"SAMPLE_0_507"},"79":{"n":"INST_79","mid":"SAMPLE_0_500"},"80":{"n":"INST_80","mid":"SAMPLE_0_501"},"81":{"n":"INST_81","mid":"SAMPLE_0_502"},"83":{"n":"INST_83","mid":"SAMPLE_0_503"},"63":{"n":"INST_63","mid":"SAMPLE_0_488"},"64":{"n":"INST_64","mid":"SAMPLE_0_481"},"65":{"n":"INST_65","mid":"SAMPLE_0_482"},"68":{"n":"INST_68","mid":"SAMPLE_0_483"},"69":{"n":"INST_69","mid":"SAMPLE_0_484"},"66":{"n":"INST_66","mid":"SAMPLE_0_486"},"67":{"n":"INST_67","mid":"SAMPLE_0_487"},"70":{"n":"INST_70","mid":"EchoingThunderburs"},"84":{"n":"INST_84","mid":"SAMPLE_0_489"},"85":{"n":"INST_85","mid":"SAMPLE_0_490"},"86":{"n":"INST_86","mid":"SAMPLE_0_491"},"91":{"n":"INST_91","mid":"SAMPLE_0_492"},"88":{"n":"INST_88","mid":"SAMPLE_0_548"},"89":{"n":"INST_89","mid":"SAMPLE_0_573"},"92":{"n":"INST_92","mid":"SAMPLE_0_509"},"93":{"n":"INST_93","mid":"SAMPLE_0_510"},"94":{"n":"INST_94","mid":"SAMPLE_0_511"},"95":{"n":"INST_95","mid":"Whish"},"96":{"n":"INST_96","mid":"AirWhoosh"},"97":{"n":"INST_97","mid":"WhipSnap"},"98":{"n":"INST_98","mid":"SAMPLE_0_516"},"99":{"n":"INST_99","mid":"SAMPLE_0_517"},"100":{"n":"INST_100","mid":"SAMPLE_0_521"},"101":{"n":"INST_101","mid":"SAMPLE_0_518"},"102":{"n":"INST_102","mid":"SAMPLE_0_519"},"103":{"n":"INST_103","mid":"InsectChirrup"},"104":{"n":"INST_104","mid":"BirdChirp2"},"105":{"n":"INST_105","mid":"SAMPLE_0_0"},"106":{"n":"INST_106","mid":"SAMPLE_0_549"},"107":{"n":"INST_107","mid":"SAMPLE_0_107"},"108":{"n":"INST_108","mid":"Timpani"},"109":{"n":"INST_109","mid":"SAMPLE_0_512"},"110":{"n":"INST_110","mid":"SAMPLE_0_513"},"111":{"n":"INST_111","mid":"SAMPLE_0_522"},"112":{"n":"INST_112","mid":"SAMPLE_0_514"},"113":{"n":"INST_113","mid":"SAMPLE_0_523"},"114":{"n":"INST_114","mid":"SAMPLE_0_541"},"115":{"n":"INST_115","mid":"SAMPLE_0_554"},"116":{"n":"INST_116","mid":"SAMPLE_0_515"},"118":{"n":"INST_118","mid":"SAMPLE_0_542"},"120":{"n":"INST_120","mid":"AdultLinkFalling2"},"121":{"n":"INST_121","mid":"SAMPLE_0_543"},"122":{"n":"INST_122","mid":"SAMPLE_0_544"},"123":{"n":"INST_123","mid":"SAMPLE_0_545"},"124":{"n":"INST_124","mid":"SAMPLE_0_118"},"125":{"n":"INST_125","mid":"FlyingFairy"},"5":{"n":"INST_5","mid":"SAMPLE_0_551"},"87":{"n":"INST_87","mid":"SAMPLE_0_425"},"117":{"n":"INST_117","mid":"SAMPLE_0_520"},"119":{"n":"INST_119","mid":"SAMPLE_0_557","hi":"SAMPLE_0_558"},"90":{"n":"INST_90","mid":"SAMPLE_0_526","lo":"SAMPLE_0_525"},"62":{"n":"INST_62","mid":"SAMPLE_0_45"}},"drums":{"0":{"n":"","s":""}},"sfx":{"0":{"n":"EFFECT_0","s":"IronKnuckleGruntUnused"},"1":{"n":"EFFECT_1","s":"IronKnuckleDies"},"2":{"n":"EFFECT_2","s":"IronKnuckleGrunts"},"3":{"n":"EFFECT_3","s":"IronKnuckleCharges"},"4":{"n":"EFFECT_4","s":"IronKnuckleAttacks"},"5":{"n":"EFFECT_5","s":"RedeadScream"},"6":{"n":"EFFECT_6","s":"EnemyStruck"},"7":{"n":"EFFECT_7","s":"SAMPLE_0_454"},"8":{"n":"EFFECT_8","s":"SAMPLE_0_456"},"9":{"n":"EFFECT_9","s":"SAMPLE_0_455"},"10":{"n":"EFFECT_10","s":"SAMPLE_0_453"},"11":{"n":"EFFECT_11","s":"SAMPLE_0_550"},"12":{"n":"EFFECT_12","s":"SAMPLE_0_399"},"13":{"n":"EFFECT_13","s":"SAMPLE_0_400"},"14":{"n":"EFFECT_14","s":"SAMPLE_0_189"},"15":{"n":"EFFECT_15","s":"SAMPLE_0_552"},"16":{"n":"EFFECT_16","s":"SAMPLE_0_553"},"17":{"n":"EFFECT_17","s":"SAMPLE_0_555"},"18":{"n":"EFFECT_18","s":"SAMPLE_0_556"},"19":{"n":"EFFECT_19","s":"SAMPLE_0_547"},"20":{"n":"EFFECT_20","s":"SAMPLE_0_426"},"21":{"n":"EFFECT_21","s":"SAMPLE_0_427"},"22":{"n":"EFFECT_22","s":"SAMPLE_0_430"},"23":{"n":"EFFECT_23","s":"SAMPLE_0_431"},"24":{"n":"EFFECT_24","s":"SAMPLE_0_404"},"25":{"n":"EFFECT_25","s":"SAMPLE_0_432"},"26":{"n":"EFFECT_26","s":"SAMPLE_0_407"},"27":{"n":"EFFECT_27","s":"SAMPLE_0_433"},"28":{"n":"EFFECT_28","s":"SAMPLE_0_436"},"29":{"n":"EFFECT_29","s":"SAMPLE_0_437"},"30":{"n":"EFFECT_30","s":"SAMPLE_0_428"},"31":{"n":"EFFECT_31","s":"SAMPLE_0_405"},"32":{"n":"EFFECT_32","s":"SAMPLE_0_434"},"33":{"n":"EFFECT_33","s":"SAMPLE_0_429"},"34":{"n":"EFFECT_34","s":"SAMPLE_0_406"},"35":{"n":"EFFECT_35","s":"SAMPLE_0_435"},"36":{"n":"EFFECT_36","s":"SAMPLE_0_536"},"37":{"n":"EFFECT_37","s":"SAMPLE_0_537"},"38":{"n":"EFFECT_38","s":"SAMPLE_0_538"},"39":{"n":"EFFECT_39","s":"SAMPLE_0_539"},"40":{"n":"EFFECT_40","s":"SAMPLE_0_540"},"41":{"n":"EFFECT_41","s":"SAMPLE_0_533"},"42":{"n":"EFFECT_42","s":"SAMPLE_0_534"},"43":{"n":"EFFECT_43","s":"SAMPLE_0_535"},"44":{"n":"EFFECT_44","s":"SAMPLE_0_524"},"45":{"n":"EFFECT_45","s":"SAMPLE_0_527"},"46":{"n":"EFFECT_46","s":"SAMPLE_0_528"},"47":{"n":"EFFECT_47","s":"SAMPLE_0_529"},"48":{"n":"EFFECT_48","s":"SAMPLE_0_530"},"49":{"n":"EFFECT_49","s":"SAMPLE_0_531"},"50":{"n":"EFFECT_50","s":"SAMPLE_0_532"},"51":{"n":"EFFECT_51","s":"SAMPLE_0_546"},"52":{"n":"EFFECT_52","s":"SAMPLE_0_457"},"53":{"n":"EFFECT_53","s":"SAMPLE_0_458"},"54":{"n":"EFFECT_54","s":"SAMPLE_0_459"},"55":{"n":"EFFECT_55","s":"SAMPLE_0_460"},"56":{"n":"EFFECT_56","s":"SAMPLE_0_559"},"57":{"n":"EFFECT_57","s":"SAMPLE_0_560"},"58":{"n":"EFFECT_58","s":"SAMPLE_0_561"},"59":{"n":"EFFECT_59","s":"SAMPLE_0_562"},"60":{"n":"EFFECT_60","s":"SAMPLE_0_563"},"61":{"n":"EFFECT_61","s":"SAMPLE_0_564"},"62":{"n":"EFFECT_62","s":"SAMPLE_0_565"},"63":{"n":"EFFECT_63","s":"SAMPLE_0_566"},"64":{"n":"EFFECT_64","s":"SAMPLE_0_567"},"65":{"n":"EFFECT_65","s":"SAMPLE_0_568"},"66":{"n":"EFFECT_66","s":"SAMPLE_0_569"},"67":{"n":"EFFECT_67","s":"SAMPLE_0_570"},"68":{"n":"EFFECT_68","s":"SAMPLE_0_571"},"69":{"n":"EFFECT_69","s":"SAMPLE_0_480"},"70":{"n":"EFFECT_70","s":"SAMPLE_0_570"},"71":{"n":"EFFECT_71","s":"SAMPLE_0_567"},"72":{"n":"EFFECT_72","s":"SAMPLE_0_436"},"73":{"n":"EFFECT_73","s":"SAMPLE_0_437"},"74":{"n":"EFFECT_74","s":"SAMPLE_0_434"},"75":{"n":"EFFECT_75","s":"SAMPLE_0_435"},"76":{"n":"EFFECT_76","s":"SAMPLE_0_433"},"77":{"n":"EFFECT_77","s":"SAMPLE_0_469"},"78":{"n":"EFFECT_78","s":"SAMPLE_0_163"},"79":{"n":"EFFECT_79","s":"SAMPLE_0_189"},"80":{"n":"EFFECT_80","s":"SAMPLE_0_163"},"81":{"n":"EFFECT_81","s":"StepCarpet"},"82":{"n":"EFFECT_82","s":"SAMPLE_0_548"},"83":{"n":"EFFECT_83","s":"SAMPLE_0_247"},"84":{"n":"EFFECT_84","s":"SAMPLE_0_248"},"85":{"n":"EFFECT_85","s":"SAMPLE_0_574"},"86":{"n":"EFFECT_86","s":"SAMPLE_0_256"},"87":{"n":"EFFECT_87","s":"SAMPLE_0_572"}}},"10":{"name":"Soundfont_10","instruments":{"0":{"n":"INST_0","mid":"Flute"},"1":{"n":"INST_1","mid":"Clarinet"},"2":{"n":"INST_2","mid":"Clarinet"},"3":{"n":"INST_3","mid":"Accordion"},"4":{"n":"INST_4","mid":"Glockenspiel"}},"drums":{"0":{"n":"DRUM_0","s":"BassDrum1"},"1":{"n":"DRUM_1","s":"SnareDrum1"},"2":{"n":"DRUM_2","s":"SnareDrum2"},"3":{"n":"DRUM_3","s":"Cymbal"},"4":{"n":"DRUM_4","s":"Timpani"}},"sfx":{}},"11":{"name":"Soundfont_11","instruments":{"0":{"n":"INST_0","mid":"SteelDrum","hi":"SteelDrumHigh"},"1":{"n":"INST_1","mid":"VocalOhs"},"2":{"n":"INST_2","mid":"AcousticGuitar1","hi":"AcousticGuitar2"}},"drums":{"0":{"n":"DRUM_0","s":"Drum1"},"1":{"n":"DRUM_1","s":"Drum2"},"2":{"n":"DRUM_2","s":"SlapBass2"},"3":{"n":"DRUM_3","s":"Shaker"}},"sfx":{}},"12":{"name":"Soundfont_12","instruments":{"0":{"n":"INST_0","mid":"AcousticGuitar1","hi":"AcousticGuitar2"},"1":{"n":"INST_1","mid":"Accordion"},"2":{"n":"INST_2","mid":"BassGuitar"},"3":{"n":"INST_3","mid":"Trombone"},"4":{"n":"INST_4","mid":"Trumpet"},"10":{"n":"INST_10","mid":"Cowbell"}},"drums":{"0":{"n":"DRUM_0","s":"Drum1"},"1":{"n":"DRUM_1","s":"Drum2"},"2":{"n":"DRUM_2","s":"SlapBass2"},"3":{"n":"DRUM_3","s":"Shaker"}},"sfx":{}},"13":{"name":"Soundfont_13","instruments":{"0":{"n":"INST_0","mid":"Koto","lo":"Sitar"},"1":{"n":"INST_1","mid":"AnotherTypeofDrum","lo":"SomeMannerOfDrum","hi":"QuickDrum"},"4":{"n":"INST_4","mid":"Windchimes","lo":"Gong"},"3":{"n":"INST_3","mid":"GoronDrum"}},"drums":{},"sfx":{}},"14":{"name":"Soundfont_14","instruments":{"0":{"n":"INST_0","mid":"Koto","lo":"Sitar"},"1":{"n":"INST_1","mid":"AnotherTypeofDrum","lo":"SomeMannerOfDrum","hi":"QuickDrum"},"5":{"n":"INST_5","mid":"Flute"},"7":{"n":"INST_7","mid":"Flute"},"10":{"n":"INST_10","mid":"Strings1","lo":"StringsLow","hi":"Strings2"},"11":{"n":"INST_11","mid":"Strings1","lo":"StringsLow","hi":"Strings2"}},"drums":{"0":{"n":"DRUM_0","s":"Gong"},"1":{"n":"DRUM_1","s":"Windchimes"}},"sfx":{}},"15":{"name":"Soundfont_15","instruments":{"5":{"n":"INST_5","mid":"Trumpet"},"6":{"n":"INST_6","mid":"Trombone"},"7":{"n":"INST_7","mid":"Tuba"},"8":{"n":"INST_8","mid":"Glockenspiel"},"10":{"n":"INST_10","mid":"Strings1","lo":"StringsLow","hi":"Strings2"},"11":{"n":"INST_11","mid":"Strings1","lo":"StringsLow","hi":"Strings2"},"14":{"n":"INST_14","mid":"Harp2","hi":"Harp1"}},"drums":{"0":{"n":"DRUM_0","s":"BassDrum1"},"1":{"n":"DRUM_1","s":"SnareDrum1"},"2":{"n":"DRUM_2","s":"SnareDrum2"},"3":{"n":"DRUM_3","s":"Cymbal"},"4":{"n":"DRUM_4","s":"Timpani"}},"sfx":{}},"16":{"name":"Soundfont_16","instruments":{"1":{"n":"INST_1","mid":"Oboe"},"3":{"n":"INST_3","mid":"Bassoon"},"10":{"n":"INST_10","mid":"Strings1","lo":"StringsLow","hi":"Strings2"},"11":{"n":"INST_11","mid":"Strings1","lo":"StringsLow","hi":"Strings2"},"12":{"n":"INST_12","mid":"Harp3","hi":"PizzicatoViolin"},"14":{"n":"INST_14","mid":"Harp2","hi":"Harp1"}},"drums":{},"sfx":{}},"17":{"name":"Soundfont_17","instruments":{"0":{"n":"INST_0","mid":"SAMPLE_0_385","lo":"SAMPLE_0_660","hi":"SAMPLE_0_661"},"1":{"n":"INST_1","mid":"SAMPLE_0_651"},"3":{"n":"INST_3","mid":"AcousticGuitar2"},"4":{"n":"INST_4","mid":"Accordion"},"5":{"n":"INST_5","mid":"Trumpet"},"6":{"n":"INST_6","mid":"Trombone"},"7":{"n":"INST_7","mid":"Tuba"},"10":{"n":"INST_10","mid":"Strings1","lo":"StringsLow","hi":"Strings2"},"11":{"n":"INST_11","mid":"Strings1","lo":"StringsLow","hi":"Strings2"},"14":{"n":"INST_14","mid":"Harp2","hi":"Harp1"},"12":{"n":"INST_12","mid":"Marimba1","hi":"Marimba2"},"13":{"n":"INST_13","mid":"SAMPLE_0_620"},"15":{"n":"INST_15","mid":"Piano","lo":"Harpsichord","hi":"PianoSoft"}},"drums":{"0":{"n":"DRUM_0","s":"BassDrum1"},"1":{"n":"DRUM_1","s":"SnareDrum1"},"2":{"n":"DRUM_2","s":"SnareDrum2"},"3":{"n":"DRUM_3","s":"Cymbal"},"4":{"n":"DRUM_4","s":"Timpani"}},"sfx":{}},"18":{"name":"Soundfont_18","instruments":{"0":{"n":"INST_0","mid":"OcarinaLooped"},"1":{"n":"INST_1","mid":"SAMPLE_0_383"},"2":{"n":"INST_2","mid":"SAMPLE_0_382","hi":"SAMPLE_0_586"},"3":{"n":"INST_3","mid":"SAMPLE_0_381"},"4":{"n":"INST_4","mid":"Strings1","lo":"StringsLow","hi":"Strings2"},"5":{"n":"INST_5","mid":"Strings1","lo":"StringsLow","hi":"Strings2"},"6":{"n":"INST_6","mid":"Harp3","hi":"PizzicatoViolin"},"7":{"n":"INST_7","mid":"Harp2","hi":"Harp1"},"8":{"n":"INST_8","mid":"SAMPLE_0_388"},"10":{"n":"INST_10","mid":"VocalEees","lo":"VocalOohs"},"11":{"n":"INST_11","mid":"VocalAahs","hi":"ResonantVocalAahs"},"12":{"n":"INST_12","mid":"SAMPLE_0_389"}},"drums":{},"sfx":{}},"19":{"name":"Soundfont_19","instruments":{"0":{"n":"INST_0","mid":"SAMPLE_0_387"},"1":{"n":"INST_1","mid":"SAMPLE_0_585","lo":"SAMPLE_0_584"},"2":{"n":"INST_2","mid":"SAMPLE_0_618"},"3":{"n":"INST_3","mid":"SAMPLE_0_382","hi":"SAMPLE_0_586"},"4":{"n":"INST_4","mid":"SAMPLE_0_614","lo":"SAMPLE_0_613"},"5":{"n":"INST_5","mid":"GoronDrum"},"6":{"n":"INST_6","mid":"Piano","lo":"Harpsichord","hi":"PianoSoft"},"7":{"n":"INST_7","mid":"SAMPLE_0_382"},"10":{"n":"INST_10","mid":"Cowbell"},"11":{"n":"INST_11","mid":"Piano","lo":"Harpsichord","hi":"PianoSoft"},"12":{"n":"INST_12","mid":"Piano","lo":"Harpsichord","hi":"PianoSoft"},"13":{"n":"INST_13","mid":"Malon"},"14":{"n":"INST_14","mid":"Malon"}},"drums":{"0":{"n":"DRUM_0","s":"BassDrum1"},"1":{"n":"DRUM_1","s":"SAMPLE_0_593"},"2":{"n":"DRUM_2","s":"SAMPLE_0_594"},"3":{"n":"DRUM_3","s":"SAMPLE_0_595"},"4":{"n":"DRUM_4","s":"SAMPLE_0_596"}},"sfx":{}},"2":{"name":"Soundfont_2","instruments":{"1":{"n":"INST_1","mid":"SAMPLE_0_0"},"2":{"n":"INST_2","mid":"InsectChirrup"},"3":{"n":"INST_3","mid":"BirdChirp2"},"4":{"n":"INST_4","mid":"SAMPLE_0_3"},"5":{"n":"INST_5","mid":"SAMPLE_0_4"},"6":{"n":"INST_6","mid":"CrowCaws"},"7":{"n":"INST_7","mid":"BirdCall"},"8":{"n":"INST_8","mid":"BirdScreech"},"9":{"n":"INST_9","mid":"BirdSongUnused"},"10":{"n":"INST_10","mid":"CuccoCrows"},"11":{"n":"INST_11","mid":"SAMPLE_0_9"},"12":{"n":"INST_12","mid":"SAMPLE_0_10"},"13":{"n":"INST_13","mid":"SmallBirdChirps"},"14":{"n":"INST_14","mid":"CawingBird"},"15":{"n":"INST_15","mid":"SlapBass1"},"16":{"n":"INST_16","mid":"HowlingWindShort"},"17":{"n":"INST_17","mid":"Howling"},"18":{"n":"INST_18","mid":"SAMPLE_0_15"},"19":{"n":"INST_19","mid":"SAMPLE_0_12"},"20":{"n":"INST_20","mid":"SAMPLE_0_16"}},"drums":{},"sfx":{}},"20":{"name":"Soundfont_20","instruments":{"0":{"n":"INST_0","mid":"SAMPLE_0_624","hi":"SAMPLE_0_625"},"1":{"n":"INST_1","mid":"SAMPLE_0_627","lo":"SAMPLE_0_626"},"2":{"n":"INST_2","mid":"SAMPLE_0_378"},"3":{"n":"INST_3","mid":"SAMPLE_0_628"},"4":{"n":"INST_4","mid":"SAMPLE_0_630","lo":"SAMPLE_0_629"},"5":{"n":"INST_5","mid":"SAMPLE_0_631"}},"drums":{},"sfx":{}},"21":{"name":"Soundfont_21","instruments":{"0":{"n":"INST_0","mid":"CrystalSynth"},"2":{"n":"INST_2","mid":"HauntingWind"},"3":{"n":"INST_3","mid":"SAMPLE_0_614","lo":"SAMPLE_0_613"},"4":{"n":"INST_4","mid":"SAMPLE_0_615"},"6":{"n":"INST_6","mid":"SAMPLE_0_616"},"7":{"n":"INST_7","mid":"SAMPLE_0_614","lo":"SAMPLE_0_613"},"8":{"n":"INST_8","mid":"SAMPLE_0_614","lo":"SAMPLE_0_613"},"10":{"n":"INST_10","mid":"SAMPLE_0_617"},"11":{"n":"INST_11","mid":"SAMPLE_0_618"},"12":{"n":"INST_12","mid":"VocalAahs","hi":"ResonantVocalAahs"}},"drums":{},"sfx":{}},"22":{"name":"Soundfont_22","instruments":{"0":{"n":"INST_0","mid":"SAMPLE_0_632"},"1":{"n":"INST_1","mid":"SAMPLE_0_633"},"2":{"n":"INST_2","mid":"SAMPLE_0_634"},"3":{"n":"INST_3","mid":"SAMPLE_0_635"},"4":{"n":"INST_4","mid":"SAMPLE_0_621"},"5":{"n":"INST_5","mid":"SAMPLE_0_621"},"6":{"n":"INST_6","mid":"SAMPLE_0_636"},"7":{"n":"INST_7","mid":"SAMPLE_0_637"}},"drums":{},"sfx":{}},"23":{"name":"Soundfont_23","instruments":{"0":{"n":"INST_0","mid":"SAMPLE_0_620"},"1":{"n":"INST_1","mid":"SAMPLE_0_620"},"2":{"n":"INST_2","mid":"SAMPLE_0_646"},"3":{"n":"INST_3","mid":"HarpsichordHigh"},"4":{"n":"INST_4","mid":"SAMPLE_0_616"},"5":{"n":"INST_5","mid":"Strings1","lo":"StringsLow","hi":"Strings2"},"6":{"n":"INST_6","mid":"CrystalSynth"},"7":{"n":"INST_7","mid":"VocalAahs","hi":"ResonantVocalAahs"},"13":{"n":"INST_13","mid":"Piano","lo":"Harpsichord","hi":"PianoSoft"},"12":{"n":"INST_12","mid":"Piano","lo":"Harpsichord","hi":"PianoSoft"}},"drums":{},"sfx":{}},"24":{"name":"Soundfont_24","instruments":{"10":{"n":"INST_10","mid":"SAMPLE_0_583"}},"drums":{"0":{"n":"DRUM_0","s":"BassDrum1"},"1":{"n":"DRUM_1","s":"SnareDrum1"},"2":{"n":"DRUM_2","s":"SnareDrum2"},"3":{"n":"DRUM_3","s":"Cymbal"},"4":{"n":"DRUM_4","s":"Timpani"}},"sfx":{}},"25":{"name":"Soundfont_25","instruments":{"0":{"n":"INST_0","mid":"Koto","lo":"Sitar"},"1":{"n":"INST_1","mid":"OcarinaLooped"},"2":{"n":"INST_2","mid":"SAMPLE_0_648","lo":"Bassoon"},"3":{"n":"INST_3","mid":"Oboe"},"4":{"n":"INST_4","mid":"Viola"},"5":{"n":"INST_5","mid":"Fiddle"},"6":{"n":"INST_6","mid":"Flute"},"8":{"n":"INST_8","mid":"SAMPLE_0_382","hi":"SAMPLE_0_586"},"10":{"n":"INST_10","mid":"Strings1","lo":"StringsLow","hi":"Strings2"},"11":{"n":"INST_11","mid":"Strings1","lo":"StringsLow","hi":"Strings2"},"12":{"n":"INST_12","mid":"VocalAahs","hi":"ResonantVocalAahs"},"13":{"n":"INST_13","mid":"VocalEees","lo":"VocalOohs"},"14":{"n":"INST_14","mid":"SAMPLE_0_649"},"15":{"n":"INST_15","mid":"HauntingWind"}},"drums":{"0":{"n":"DRUM_0","s":"TamboDrum"},"1":{"n":"DRUM_1","s":"DrumSidestick"},"2":{"n":"DRUM_2","s":"FingerCymbals"}},"sfx":{}},"26":{"name":"Soundfont_26","instruments":{"0":{"n":"INST_0","mid":"SAMPLE_0_615"},"1":{"n":"INST_1","mid":"SAMPLE_0_617"},"2":{"n":"INST_2","mid":"SAMPLE_0_616"},"3":{"n":"INST_3","mid":"SAMPLE_0_619"}},"drums":{},"sfx":{}},"27":{"name":"Soundfont_27","instruments":{"0":{"n":"INST_0","mid":"SAMPLE_0_583"},"1":{"n":"INST_1","mid":"SAMPLE_0_651"},"2":{"n":"INST_2","mid":"SAMPLE_0_634"},"3":{"n":"INST_3","mid":"Banjo","lo":"BanjoLow"}},"drums":{"0":{"n":"DRUM_0","s":"BassDrum1"},"1":{"n":"DRUM_1","s":"SnareDrum1"},"2":{"n":"DRUM_2","s":"SnareDrum2"},"3":{"n":"DRUM_3","s":"Cymbal"},"4":{"n":"DRUM_4","s":"Timpani"}},"sfx":{}},"28":{"name":"Soundfont_28","instruments":{"0":{"n":"INST_0","mid":"Koto","lo":"Sitar"},"2":{"n":"INST_2","mid":"SAMPLE_0_648","lo":"Bassoon"},"3":{"n":"INST_3","mid":"Oboe"},"6":{"n":"INST_6","mid":"Flute"},"7":{"n":"INST_7","mid":"Horn"},"10":{"n":"INST_10","mid":"Strings1","lo":"StringsLow","hi":"Strings2"},"11":{"n":"INST_11","mid":"Strings1","lo":"StringsLow","hi":"Strings2"}},"drums":{},"sfx":{}},"29":{"name":"Soundfont_29","instruments":{"0":{"n":"INST_0","mid":"GuitarHigh"},"3":{"n":"INST_3","mid":"SteelDrum","hi":"SteelDrumHigh"},"4":{"n":"INST_4","mid":"SAMPLE_0_387"},"5":{"n":"INST_5","mid":"SAMPLE_0_652"},"10":{"n":"INST_10","mid":"Strings1","lo":"StringsLow","hi":"Strings2"}},"drums":{},"sfx":{}},"3":{"name":"Soundfont_3","instruments":{"0":{"n":"INST_0","mid":"Flute"},"1":{"n":"INST_1","mid":"Oboe"},"2":{"n":"INST_2","mid":"Clarinet"},"3":{"n":"INST_3","mid":"Bassoon"},"4":{"n":"INST_4","mid":"Horn"},"5":{"n":"INST_5","mid":"Trumpet"},"6":{"n":"INST_6","mid":"Trombone"},"7":{"n":"INST_7","mid":"Tuba"},"8":{"n":"INST_8","mid":"Glockenspiel"},"10":{"n":"INST_10","mid":"Strings1","lo":"StringsLow","hi":"Strings2"},"11":{"n":"INST_11","mid":"Strings1","lo":"StringsLow","hi":"Strings2"},"12":{"n":"INST_12","mid":"Harp3","hi":"PizzicatoViolin"},"13":{"n":"INST_13","mid":"Piano","lo":"Harpsichord","hi":"PianoSoft"},"14":{"n":"INST_14","mid":"Harp2","hi":"Harp1"},"15":{"n":"INST_15","mid":"Marimba1","hi":"Marimba2"}},"drums":{"0":{"n":"DRUM_0","s":"BassDrum1"},"1":{"n":"DRUM_1","s":"SnareDrum1"},"2":{"n":"DRUM_2","s":"SnareDrum2"},"3":{"n":"DRUM_3","s":"Cymbal"},"4":{"n":"DRUM_4","s":"Timpani"}},"sfx":{}},"30":{"name":"Soundfont_30","instruments":{"0":{"n":"INST_0","mid":"SAMPLE_0_615"},"1":{"n":"INST_1","mid":"Piano","lo":"Harpsichord","hi":"PianoSoft"},"2":{"n":"INST_2","mid":"SAMPLE_0_619"},"3":{"n":"INST_3","mid":"SAMPLE_0_620"},"4":{"n":"INST_4","mid":"SAMPLE_0_621"},"5":{"n":"INST_5","mid":"VocalEees","lo":"VocalOohs"},"6":{"n":"INST_6","mid":"Flute"},"7":{"n":"INST_7","mid":"Malon"},"8":{"n":"INST_8","mid":"Malon"}},"drums":{},"sfx":{}},"31":{"name":"Soundfont_31","instruments":{"1":{"n":"INST_1","mid":"AnotherTypeofDrum","lo":"SomeMannerOfDrum","hi":"QuickDrum"},"2":{"n":"INST_2","mid":"SAMPLE_0_651"},"4":{"n":"INST_4","mid":"SAMPLE_0_583"},"5":{"n":"INST_5","mid":"SAMPLE_0_378"},"6":{"n":"INST_6","mid":"Accordion"},"7":{"n":"INST_7","mid":"SAMPLE_0_652"}},"drums":{},"sfx":{}},"32":{"name":"Soundfont_32","instruments":{"0":{"n":"INST_0","mid":"SAMPLE_0_387"},"1":{"n":"INST_1","mid":"SAMPLE_0_585","lo":"SAMPLE_0_584"},"3":{"n":"INST_3","mid":"SAMPLE_0_382","hi":"SAMPLE_0_586"},"4":{"n":"INST_4","mid":"SAMPLE_0_614","lo":"SAMPLE_0_613"},"8":{"n":"INST_8","mid":"SAMPLE_0_621"},"12":{"n":"INST_12","mid":"HarpsichordHigh"},"14":{"n":"INST_14","mid":"Glockenspiel"},"15":{"n":"INST_15","mid":"DrumSidestick","lo":"TamboDrum","hi":"FingerCymbals"}},"drums":{"0":{"n":"DRUM_0","s":"SAMPLE_0_592"},"1":{"n":"DRUM_1","s":"SAMPLE_0_593"},"2":{"n":"DRUM_2","s":"SAMPLE_0_594"},"3":{"n":"DRUM_3","s":"SAMPLE_0_595"},"4":{"n":"DRUM_4","s":"SAMPLE_0_596"}},"sfx":{}},"33":{"name":"Soundfont_33","instruments":{"0":{"n":"INST_0","mid":"Flute"},"1":{"n":"INST_1","mid":"Oboe"},"2":{"n":"INST_2","mid":"VocalAahs","hi":"ResonantVocalAahs"},"3":{"n":"INST_3","mid":"SAMPLE_0_648","lo":"Bassoon"},"4":{"n":"INST_4","mid":"Horn"},"5":{"n":"INST_5","mid":"Trumpet"},"6":{"n":"INST_6","mid":"Trombone"},"7":{"n":"INST_7","mid":"Tuba"},"8":{"n":"INST_8","mid":"Glockenspiel"},"10":{"n":"INST_10","mid":"Strings1","lo":"StringsLow","hi":"Strings2"},"11":{"n":"INST_11","mid":"Strings1","lo":"StringsLow","hi":"Strings2"},"12":{"n":"INST_12","mid":"Harp3","hi":"PizzicatoViolin"},"13":{"n":"INST_13","mid":"SAMPLE_0_389"},"14":{"n":"INST_14","mid":"Harp2","hi":"Harp1"},"15":{"n":"INST_15","mid":"VocalEees","lo":"VocalOohs"}},"drums":{"0":{"n":"DRUM_0","s":"BassDrum1"},"1":{"n":"DRUM_1","s":"SnareDrum1"},"2":{"n":"DRUM_2","s":"SnareDrum2"},"3":{"n":"DRUM_3","s":"Cymbal"},"4":{"n":"DRUM_4","s":"Timpani"}},"sfx":{}},"34":{"name":"Soundfont_34","instruments":{"0":{"n":"INST_0","mid":"Flute"}},"drums":{},"sfx":{}},"35":{"name":"Soundfont_35","instruments":{"0":{"n":"INST_0","mid":"Flute"},"1":{"n":"INST_1","mid":"Oboe"},"2":{"n":"INST_2","mid":"Clarinet"},"3":{"n":"INST_3","mid":"SAMPLE_0_648","lo":"Bassoon"},"4":{"n":"INST_4","mid":"Horn"},"5":{"n":"INST_5","mid":"Trumpet"},"6":{"n":"INST_6","mid":"Trombone"},"7":{"n":"INST_7","mid":"Tuba"},"10":{"n":"INST_10","mid":"Strings1","lo":"StringsLow","hi":"Strings2"},"11":{"n":"INST_11","mid":"Strings1","lo":"StringsLow","hi":"Strings2"},"12":{"n":"INST_12","mid":"Harp3","hi":"PizzicatoViolin"},"14":{"n":"INST_14","mid":"Harp2","hi":"Harp1"},"13":{"n":"INST_13","mid":"SAMPLE_0_651"},"15":{"n":"INST_15","mid":"SAMPLE_0_385","lo":"SAMPLE_0_660","hi":"SAMPLE_0_661"}},"drums":{"0":{"n":"DRUM_0","s":"BassDrum1"},"1":{"n":"DRUM_1","s":"SnareDrum1"},"2":{"n":"DRUM_2","s":"SnareDrum2"},"3":{"n":"DRUM_3","s":"Cymbal"},"4":{"n":"DRUM_4","s":"Timpani"}},"sfx":{}},"36":{"name":"Soundfont_36","instruments":{"0":{"n":"INST_0","mid":"Flute"},"1":{"n":"INST_1","mid":"SAMPLE_0_387"},"2":{"n":"INST_2","mid":"SAMPLE_0_585","lo":"SAMPLE_0_584"},"3":{"n":"INST_3","mid":"SAMPLE_0_382","hi":"SAMPLE_0_586"},"4":{"n":"INST_4","mid":"DrumSidestick","lo":"TamboDrum","hi":"FingerCymbals"},"5":{"n":"INST_5","mid":"Trombone"},"6":{"n":"INST_6","mid":"Piano","lo":"Harpsichord","hi":"PianoSoft"},"7":{"n":"INST_7","mid":"Accordion"},"8":{"n":"INST_8","mid":"Viola"},"10":{"n":"INST_10","mid":"Strings1","lo":"StringsLow","hi":"Strings2"},"11":{"n":"INST_11","mid":"Strings1","lo":"StringsLow","hi":"Strings2"},"13":{"n":"INST_13","mid":"Malon"},"14":{"n":"INST_14","mid":"Malon"}},"drums":{"0":{"n":"DRUM_0","s":"SAMPLE_0_592"},"1":{"n":"DRUM_1","s":"SAMPLE_0_593"},"2":{"n":"DRUM_2","s":"SAMPLE_0_594"},"3":{"n":"DRUM_3","s":"SAMPLE_0_595"},"4":{"n":"DRUM_4","s":"SAMPLE_0_596"}},"sfx":{}},"37":{"name":"Soundfont_37","instruments":{"0":{"n":"INST_0","mid":"Flute"},"1":{"n":"INST_1","mid":"Oboe"},"2":{"n":"INST_2","mid":"Horn"},"3":{"n":"INST_3","mid":"SAMPLE_0_382","hi":"SAMPLE_0_586"},"4":{"n":"INST_4","mid":"DrumSidestick","lo":"TamboDrum","hi":"FingerCymbals"},"5":{"n":"INST_5","mid":"Trombone"},"6":{"n":"INST_6","mid":"Piano","lo":"Harpsichord","hi":"PianoSoft"},"7":{"n":"INST_7","mid":"Accordion"},"8":{"n":"INST_8","mid":"Viola"},"10":{"n":"INST_10","mid":"Strings1","lo":"StringsLow","hi":"Strings2"},"11":{"n":"INST_11","mid":"Strings1","lo":"StringsLow","hi":"Strings2"},"12":{"n":"INST_12","mid":"VocalAahs","hi":"ResonantVocalAahs"},"14":{"n":"INST_14","mid":"Harp2","hi":"Harp1"}},"drums":{"0":{"n":"DRUM_0","s":"BassDrum1"},"1":{"n":"DRUM_1","s":"SnareDrum1"},"2":{"n":"DRUM_2","s":"SnareDrum2"},"3":{"n":"DRUM_3","s":"Cymbal"},"4":{"n":"DRUM_4","s":"Timpani"}},"sfx":{}},"38":{"name":"Soundfont_38","instruments":{"0":{"n":"INST_0","mid":"GoronDrum"},"1":{"n":"INST_1","mid":"GoronOoh","lo":"BassSlap"},"2":{"n":"INST_2","mid":"TomDrum","lo":"GoronOohHigh"},"3":{"n":"INST_3","mid":"ResonantBassMarimba"},"4":{"n":"INST_4","mid":"ResonantBassMarimba"}},"drums":{},"sfx":{}},"39":{"name":"Soundfont_39","instruments":{"1":{"n":"INST_1","mid":"AnotherTypeofDrum","lo":"SomeMannerOfDrum","hi":"QuickDrum"},"2":{"n":"INST_2","mid":"SAMPLE_0_651"},"4":{"n":"INST_4","mid":"SAMPLE_0_583"},"5":{"n":"INST_5","mid":"SAMPLE_0_378"},"6":{"n":"INST_6","mid":"Accordion"},"7":{"n":"INST_7","mid":"SAMPLE_0_652"}},"drums":{},"sfx":{}},"4":{"name":"Soundfont_4","instruments":{"0":{"n":"INST_0","mid":"Koto","lo":"Sitar"},"1":{"n":"INST_1","mid":"OcarinaLooped"},"2":{"n":"INST_2","mid":"Bassoon"},"3":{"n":"INST_3","mid":"Oboe"},"12":{"n":"INST_12","mid":"Harp3","hi":"PizzicatoViolin"}},"drums":{"0":{"n":"DRUM_0","s":"TamboDrum"},"1":{"n":"DRUM_1","s":"DrumSidestick"},"2":{"n":"DRUM_2","s":"FingerCymbals"}},"sfx":{}},"40":{"name":"Soundfont_40","instruments":{"0":{"n":"INST_0","mid":"GoronDrum"},"1":{"n":"INST_1","mid":"GoronOoh","lo":"BassSlap"},"2":{"n":"INST_2","mid":"TomDrum","lo":"GoronOohHigh"},"3":{"n":"INST_3","mid":"ResonantBassMarimba"},"4":{"n":"INST_4","mid":"ResonantBassMarimba"}},"drums":{},"sfx":{}},"5":{"name":"Soundfont_5","instruments":{"0":{"n":"INST_0","mid":"Fiddle"},"1":{"n":"INST_1","mid":"AcousticGuitar1","hi":"AcousticGuitar2"},"2":{"n":"INST_2","mid":"AcousticGuitar1","hi":"AcousticGuitar2"},"3":{"n":"INST_3","mid":"OcarinaLooped"},"4":{"n":"INST_4","mid":"Glockenspiel"},"5":{"n":"INST_5","mid":"Accordion"},"6":{"n":"INST_6","mid":"Accordion"},"7":{"n":"INST_7","mid":"Tuba"}},"drums":{"0":{"n":"DRUM_0","s":"TamboDrum"},"1":{"n":"DRUM_1","s":"DrumSidestick"},"2":{"n":"DRUM_2","s":"FingerCymbals"}},"sfx":{}},"6":{"name":"Soundfont_6","instruments":{"0":{"n":"INST_0","mid":"Harp2","hi":"Harp1"},"1":{"n":"INST_1","mid":"Harp2","hi":"Harp1"},"2":{"n":"INST_2","mid":"Harp2","hi":"Harp1"},"3":{"n":"INST_3","mid":"Harp2"},"4":{"n":"INST_4","mid":"Strings1","lo":"StringsLow","hi":"Strings2"},"5":{"n":"INST_5","mid":"OcarinaLooped"},"6":{"n":"INST_6","mid":"VocalEees","lo":"VocalOohs"},"7":{"n":"INST_7","mid":"VocalEees","lo":"VocalOohs"},"8":{"n":"INST_8","mid":"Glockenspiel"},"10":{"n":"INST_10","mid":"Strings1","lo":"StringsLow","hi":"Strings2"},"11":{"n":"INST_11","mid":"Strings1","lo":"StringsLow","hi":"Strings2"},"12":{"n":"INST_12","mid":"Harp3","hi":"PizzicatoViolin"}},"drums":{"0":{"n":"DRUM_0","s":"BassDrum1"},"1":{"n":"DRUM_1","s":"SnareDrum1"},"2":{"n":"DRUM_2","s":"SnareDrum2"},"3":{"n":"DRUM_3","s":"Cymbal"},"4":{"n":"DRUM_4","s":"Timpani"}},"sfx":{}},"7":{"name":"Soundfont_7","instruments":{"0":{"n":"INST_0","mid":"Malon"},"1":{"n":"INST_1","mid":"Malon"},"2":{"n":"INST_2","mid":"Guitar","lo":"GuitarLow","hi":"GuitarHigh"},"3":{"n":"INST_3","mid":"GuitarHigh"},"4":{"n":"INST_4","mid":"GuitarHigh"},"11":{"n":"INST_11","mid":"Strings1","lo":"StringsLow","hi":"Strings2"},"12":{"n":"INST_12","mid":"Strings1","lo":"StringsLow","hi":"Strings2"},"13":{"n":"INST_13","mid":"Viola"},"14":{"n":"INST_14","mid":"Viola"},"15":{"n":"INST_15","mid":"ChurchBell"}},"drums":{},"sfx":{}},"8":{"name":"Soundfont_8","instruments":{"0":{"n":"INST_0","mid":"Banjo","lo":"BanjoLow"},"1":{"n":"INST_1","mid":"Banjo","lo":"BanjoLow"},"5":{"n":"INST_5","mid":"BassGuitar"},"6":{"n":"INST_6","mid":"Fiddle"},"7":{"n":"INST_7","mid":"AcousticGuitar1","hi":"AcousticGuitar2"},"13":{"n":"INST_13","mid":"Viola"},"14":{"n":"INST_14","mid":"Viola"}},"drums":{},"sfx":{}},"9":{"name":"Soundfont_9","instruments":{"0":{"n":"INST_0","mid":"Harp2","hi":"Harp1"},"1":{"n":"INST_1","mid":"Harp2","hi":"Harp1"},"4":{"n":"INST_4","mid":"Strings1","lo":"StringsLow","hi":"Strings2"},"5":{"n":"INST_5","mid":"OcarinaLooped"},"8":{"n":"INST_8","mid":"Glockenspiel"},"10":{"n":"INST_10","mid":"Strings1","lo":"StringsLow","hi":"Strings2"},"11":{"n":"INST_11","mid":"Strings1","lo":"StringsLow","hi":"Strings2"},"12":{"n":"INST_12","mid":"Harp3","hi":"PizzicatoViolin"}},"drums":{"0":{"n":"DRUM_0","s":"BassDrum1"},"1":{"n":"DRUM_1","s":"SnareDrum1"},"2":{"n":"DRUM_2","s":"SnareDrum2"},"3":{"n":"DRUM_3","s":"Cymbal"},"4":{"n":"DRUM_4","s":"Timpani"},"5":{"n":"","s":""},"6":{"n":"","s":""},"7":{"n":"","s":""},"8":{"n":"","s":""},"9":{"n":"","s":""},"10":{"n":"","s":""},"11":{"n":"","s":""},"12":{"n":"","s":""},"13":{"n":"","s":""},"14":{"n":"","s":""},"15":{"n":"","s":""},"16":{"n":"","s":""},"17":{"n":"","s":""},"18":{"n":"","s":""},"19":{"n":"","s":""},"20":{"n":"","s":""},"21":{"n":"","s":""},"22":{"n":"","s":""},"23":{"n":"","s":""},"24":{"n":"","s":""},"25":{"n":"","s":""}},"sfx":{}}};
 
     // Tags 1-4095 are reserved for internal audio API events.
     // Downstream mods register custom tag names (>= 0x1000) via AudioApi_DebugRegisterTag;
@@ -1764,9 +1913,11 @@
       els.tabOverviewBtn = document.getElementById('tabOverviewBtn');
       els.tabEventsBtn = document.getElementById('tabEventsBtn');
       els.tabDjBtn = document.getElementById('tabDjBtn');
+      els.tabPatcherBtn = document.getElementById('tabPatcherBtn');
       els.overviewTab = document.getElementById('overviewTab');
       els.eventsTab = document.getElementById('eventsTab');
       els.djTab = document.getElementById('djTab');
+      els.patcherTab = document.getElementById('patcherTab');
       els.djResetAllBtn = document.getElementById('djResetAllBtn');
       els.djShowAllPlayersBtn = document.getElementById('djShowAllPlayersBtn');
       els.djShowActivePlayersBtn = document.getElementById('djShowActivePlayersBtn');
@@ -2200,6 +2351,9 @@
         }
 
         state.snapshot = snapshot;
+        if (patcher.lastReloadSeqSig && patcher.lastReloadSeqSig !== patcherCurrentSeqSig(snapshot)) {
+          patcherSetReloadNeeded(true);
+        }
         renderSnapshot(snapshot, eventsMeta);
         renderStreams(streamsData && Array.isArray(streamsData.streams) ? streamsData.streams : []);
 
@@ -2267,9 +2421,11 @@
         els.tabOverviewBtn.classList.toggle('active', tabName === 'overview');
         els.tabEventsBtn.classList.toggle('active', tabName === 'events');
         els.tabDjBtn.classList.toggle('active', tabName === 'dj');
+        els.tabPatcherBtn.classList.toggle('active', tabName === 'patcher');
         els.overviewTab.classList.toggle('active', tabName === 'overview');
         els.eventsTab.classList.toggle('active', tabName === 'events');
         els.djTab.classList.toggle('active', tabName === 'dj');
+        els.patcherTab.classList.toggle('active', tabName === 'patcher');
         if (tabName === 'dj') {
           notifyMixerOpen(true);
           if (state.snapshot) {
@@ -2278,11 +2434,15 @@
         } else if (wasDj) {
           notifyMixerOpen(false);
         }
+        if (tabName === 'patcher') {
+          patcherRefreshFonts();
+        }
       };
 
       els.tabOverviewBtn.addEventListener('click', () => activateTab('overview'));
       els.tabEventsBtn.addEventListener('click', () => activateTab('events'));
       els.tabDjBtn.addEventListener('click', () => activateTab('dj'));
+      els.tabPatcherBtn.addEventListener('click', () => activateTab('patcher'));
 
       els.djResetAllBtn.addEventListener('click', () => {
         djClearAll();
@@ -2300,6 +2460,470 @@
       els.djShowActivePlayersBtn.addEventListener('click', () => setDjPlayerFilter(false));
     }
 
+    // ── Sample Patcher ───────────────────────────────────────────────────────
+
+    const patcher = {
+      file: null,
+      fileUrl: null,
+      fonts: [],
+      activeFonts: [],
+      baseFonts: {},
+      lastReloadSeqSig: '',
+      needsReload: false,
+    };
+
+    function patcherDecodeTuning(v) {
+      return (Number(v) || 0) / 1000000;
+    }
+
+    function patcherFormatTuning(v) {
+      return patcherDecodeTuning(v).toFixed(4);
+    }
+
+    function patcherCurrentSeqSig(snapshot = state.snapshot) {
+      if (!snapshot) return '';
+      return [
+        snapshot.main_seq_id ?? '-',
+        snapshot.sub_seq_id ?? '-',
+        snapshot.fanfare_seq_id ?? '-',
+        snapshot.ambience_seq_id ?? '-',
+      ].join('|');
+    }
+
+    function patcherSetReloadNeeded(needsReload) {
+      patcher.needsReload = !!needsReload;
+      const btn = document.getElementById('patcherReloadBtn');
+      if (!btn) return;
+      btn.classList.toggle('attn', patcher.needsReload);
+      btn.textContent = patcher.needsReload ? 'Reload info *' : 'Reload info';
+    }
+
+    // Patch log entries: [{ts, msg, kind}]
+    const patchLog = [];
+
+    function patcherLog(msg, kind = '') {
+      const ts = new Date().toLocaleTimeString();
+      patchLog.unshift({ ts, msg, kind });
+      if (patchLog.length > 100) patchLog.pop();
+      patcherRenderLog();
+    }
+
+    function patcherRenderLog() {
+      const el = document.getElementById('patcherLog');
+      if (!el) return;
+      if (patchLog.length === 0) {
+        el.innerHTML = '<span style="color:var(--muted-2);">No replacements yet.</span>';
+        return;
+      }
+      el.innerHTML = patchLog.map(e => {
+        const col = e.kind === 'good' ? 'var(--good)' : e.kind === 'bad' ? 'var(--bad)' : 'var(--muted)';
+        return `<div style="color:${col};"><span style="color:var(--muted-2);">[${e.ts}]</span> ${e.msg}</div>`;
+      }).join('');
+    }
+
+    function patcherFontName(fontId) {
+      const d = SOUNDFONT_DATA[fontId];
+      return d ? d.name : `Font_${fontId}`;
+    }
+
+    function patcherInstName(fontId, slotId) {
+      const d = SOUNDFONT_DATA[fontId];
+      if (!d) return null;
+      const inst = d.instruments[slotId];
+      return inst ? inst.n : null;
+    }
+
+    function patcherDrumName(fontId, slotId) {
+      const d = SOUNDFONT_DATA[fontId];
+      if (!d) return null;
+      const drum = d.drums[slotId];
+      return drum ? drum.n : null;
+    }
+
+    function patcherSfxName(fontId, slotId) {
+      const d = SOUNDFONT_DATA[fontId];
+      if (!d) return null;
+      const sfx = d.sfx[slotId];
+      return sfx ? sfx.n : null;
+    }
+
+    function patcherCurrentUsage(fontId, targetType, slotId) {
+      const snapshot = state.snapshot;
+      const players = Array.isArray(snapshot?.players) ? snapshot.players : [];
+      const hits = [];
+      for (const player of players) {
+        const chFonts = Array.isArray(player.ch_font_id) ? player.ch_font_id : [];
+        const chInst = Array.isArray(player.ch_inst_or_wave) ? player.ch_inst_or_wave : [];
+        const chEnabled = Array.isArray(player.ch_enabled) ? player.ch_enabled : [];
+        for (let ch = 0; ch < chFonts.length; ch++) {
+          if (!chEnabled[ch]) continue;
+          if (chFonts[ch] !== fontId) continue;
+          if (targetType === 'inst' && chInst[ch] === slotId + 2) {
+            hits.push(`P${player.player}|ch${ch}`);
+          } else if (targetType === 'drum' && chInst[ch] === 0) {
+            hits.push(`P${player.player}|ch${ch}`);
+          } else if (targetType === 'sfx' && chInst[ch] === 1) {
+            hits.push(`P${player.player}|ch${ch}`);
+          }
+        }
+      }
+      return hits;
+    }
+
+    function patcherRefreshFonts() {
+      fetch(API_BASE + '/soundfonts', { cache: 'no-store' })
+        .then(r => r.ok ? r.json() : null)
+        .then(data => {
+          if (!data || !Array.isArray(data.fonts)) return;
+          patcher.fonts = data.fonts;
+          patcher.activeFonts = Array.isArray(data.activeFonts) ? data.activeFonts : [];
+          patcher.lastReloadSeqSig = patcherCurrentSeqSig();
+          patcherSetReloadNeeded(false);
+          data.fonts.forEach(f => {
+            const key = String(f.id);
+            if (!patcher.baseFonts[key]) {
+              patcher.baseFonts[key] = JSON.parse(JSON.stringify(f));
+            }
+          });
+          const sel = document.getElementById('patcherFontId');
+          const onlyRelevant = !!document.getElementById('patcherOnlyRelevant')?.checked;
+          if (!sel) return;
+          const prev = sel.value;
+          sel.innerHTML = '';
+          const filteredFonts = data.fonts.filter(f => {
+            if (!onlyRelevant) return true;
+            if (patcher.activeFonts.includes(f.id)) return true;
+            return String(f.id) === String(prev);
+          });
+          filteredFonts.forEach(f => {
+            const opt = document.createElement('option');
+            opt.value = f.id;
+            const isActive = patcher.activeFonts.includes(f.id);
+            const xmlName = patcherFontName(f.id);
+            const label = xmlName !== `Font_${f.id}` ? `${f.id}: ${xmlName}` : `Font ${f.id}`;
+            opt.textContent = `${isActive ? '▶ ' : ''}${label}  (${f.numInstruments}i / ${f.numDrums}d / ${f.numSfx}sfx)`;
+            if (isActive) opt.style.color = 'var(--good)';
+            sel.appendChild(opt);
+          });
+          if (prev !== '' && data.fonts.some(f => String(f.id) === String(prev))) {
+            sel.value = prev;
+          }
+          patcherUpdateFontInfo();
+        })
+        .catch(() => {});
+    }
+
+    function patcherUpdateFontInfo() {
+      const fontIdEl = document.getElementById('patcherFontId');
+      const infoWrap = document.getElementById('patcherFontInfo');
+      const infoBody = document.getElementById('patcherFontInfoBody');
+      if (!fontIdEl || !infoWrap || !infoBody) return;
+      const fontId = parseInt(fontIdEl.value, 10);
+      const font = patcher.fonts.find(f => f.id === fontId);
+      if (!font) { infoWrap.style.display = 'none'; return; }
+      const targetType = document.getElementById('patcherTargetType')?.value ?? 'inst';
+      const slotId = parseInt(document.getElementById('patcherSlotId')?.value ?? '0', 10);
+      const filterText = (document.getElementById('patcherFilter')?.value ?? '').trim().toLowerCase();
+      infoWrap.style.display = '';
+
+      const isActive = patcher.activeFonts.includes(fontId);
+      const activeLabel = isActive ? ' <span style="color:var(--good);">▶ currently playing</span>' : '';
+      const xmlName = patcherFontName(fontId);
+      const baseFont = patcher.baseFonts[String(fontId)] || font;
+
+      let html = `<div style="margin-bottom:8px;"><strong>${xmlName}</strong>${activeLabel}</div>`;
+
+      // Which players use this font?
+      const playerNames = ['BGM Main','BGM Sub','SFX','Fanfare','Ambience'];
+      const usingPlayers = patcher.activeFonts
+        .map((fid, pi) => fid === fontId ? (playerNames[pi] ?? `P${pi}`) : null)
+        .filter(Boolean);
+      if (usingPlayers.length) {
+        html += `<div style="font-size:11px;color:var(--good);margin-bottom:6px;">▶ In use by: ${usingPlayers.join(', ')}</div>`;
+      }
+
+      const ROW_CLICK = (slot, region) =>
+        `onclick="document.getElementById('patcherSlotId').value=${slot};` +
+        (region !== undefined ? `document.getElementById('patcherPitchRegion').value=${region};` : '') +
+        `patcherUpdateFontInfo();"`;
+
+      if (targetType === 'inst') {
+        const xmlFont = SOUNDFONT_DATA[fontId];
+        const regions = font.instRegions || [];
+        const baseLo = baseFont.instTuningsLo || [];
+        const baseMid = baseFont.instTuningsMid || [];
+        const baseHi = baseFont.instTuningsHi || [];
+        if (slotId >= 0 && slotId < font.numInstruments) {
+          html += `<div style="font-size:11px;color:var(--muted);margin-bottom:6px;">Original tuning: Lo ${patcherFormatTuning(baseLo[slotId])} · Mid ${patcherFormatTuning(baseMid[slotId])} · Hi ${patcherFormatTuning(baseHi[slotId])}</div>`;
+        }
+        // Columns: slot | sample name (mid) | Lo | Mid | Hi
+        // Lo/Mid/Hi cells are individually clickable to select that region.
+        // Clicking the row selects slot; clicking a region cell also sets pitchRegion.
+        html += `<div style="font-size:11px;color:var(--muted-2);margin-bottom:4px;">Click a row to select slot · click Lo/Mid/Hi to also set pitch region · live state from game</div>`;
+        html += `<div style="display:grid;grid-template-columns:2.5em 1fr 3.2em 3.2em 3.2em;gap:1px 8px;font-size:12px;align-items:center;">`;
+        html += `<span style="color:var(--muted-2);">Slot</span><span style="color:var(--muted-2);">Sample (mid)</span>`;
+        html += `<span style="color:var(--muted-2);text-align:center;cursor:default;">Lo</span>`;
+        html += `<span style="color:var(--muted-2);text-align:center;cursor:default;">Mid</span>`;
+        html += `<span style="color:var(--muted-2);text-align:center;cursor:default;">Hi</span>`;
+        const numInst = font.numInstruments;
+        for (let i = 0; i < numInst; i++) {
+          const mask = regions[i] ?? 0;
+          const hasLo = !!(mask & 1), hasMid = !!(mask & 2), hasHi = !!(mask & 4);
+          const xmlInst = xmlFont?.instruments[i];
+          // Primary display: sample name. Fall back to INST_N only if no XML data.
+          const midName = xmlInst?.mid ?? (xmlInst ? xmlInst.n : `inst_${i}`);
+          const loName  = xmlInst?.lo  ?? '–';
+          const hiName  = xmlInst?.hi  ?? '–';
+          const usage = patcherCurrentUsage(fontId, 'inst', i);
+          const usageLabel = usage.length ? ` <span style="color:var(--good);font-size:11px;">used in: ${usage.join(', ')}</span>` : '';
+          const searchHay = `${i} ${midName} ${loName} ${hiName} ${usage.join(' ')}`.toLowerCase();
+          if (filterText && !searchHay.includes(filterText)) continue;
+          const isSel = i === slotId;
+          const rowBg = isSel ? 'background:rgba(120,184,255,0.10);' : 'background:transparent;';
+          const rowStyle = `${rowBg}border-radius:3px;padding:1px 2px;cursor:pointer;`;
+          const dot = (has, name, region) => has
+            ? `<span title="Click to patch ${name}" style="color:var(--good);text-align:center;cursor:pointer;" ${ROW_CLICK(i, region)}>✓</span>`
+            : `<span title="No sample (click to add)" style="color:var(--muted-2);text-align:center;cursor:pointer;opacity:0.5;" ${ROW_CLICK(i, region)}>+</span>`;
+          html += `<span style="${rowStyle}font-family:var(--mono);" ${ROW_CLICK(i)}>${i}</span>`;
+          html += `<span style="${rowStyle}overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${midName}" ${ROW_CLICK(i)}>${midName}${usageLabel}</span>`;
+          html += dot(hasLo, loName, 0) + dot(hasMid, midName, 1) + dot(hasHi, hiName, 2);
+        }
+        html += `</div>`;
+      } else if (targetType === 'drum') {
+        const xmlFont = SOUNDFONT_DATA[fontId];
+        const baseDrumTunings = baseFont.drumTunings || [];
+        if (slotId >= 0 && slotId < font.numDrums) {
+          html += `<div style="font-size:11px;color:var(--muted);margin-bottom:6px;">Original tuning: ${patcherFormatTuning(baseDrumTunings[slotId])}</div>`;
+        }
+        html += `<div style="font-size:11px;color:var(--muted-2);margin-bottom:4px;">Click a row to select slot</div>`;
+        html += `<div style="display:grid;grid-template-columns:2.5em 1fr;gap:1px 8px;font-size:12px;">`;
+        html += `<span style="color:var(--muted-2);">Slot</span><span style="color:var(--muted-2);">Sample</span>`;
+        for (let i = 0; i < font.numDrums; i++) {
+          const d = xmlFont?.drums[i];
+          const name = d ? (d.s || d.n) : `drum_${i}`;
+          const usage = patcherCurrentUsage(fontId, 'drum', i);
+          const usageLabel = usage.length ? ` <span style="color:var(--good);font-size:11px;">used in: ${usage.join(', ')}</span>` : '';
+          const searchHay = `${i} ${name} ${usage.join(' ')}`.toLowerCase();
+          if (filterText && !searchHay.includes(filterText)) continue;
+          const isSel = i === slotId;
+          const rowBg = isSel ? 'background:rgba(120,184,255,0.10);' : '';
+          const rowStyle = `${rowBg}border-radius:3px;padding:1px 2px;cursor:pointer;`;
+          html += `<span style="${rowStyle}font-family:var(--mono);" ${ROW_CLICK(i)}>${i}</span>`;
+          html += `<span style="${rowStyle}overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${name}" ${ROW_CLICK(i)}>${name}${usageLabel}</span>`;
+        }
+        html += `</div>`;
+      } else {
+        const xmlFont = SOUNDFONT_DATA[fontId];
+        const baseSfxTunings = baseFont.sfxTunings || [];
+        if (slotId >= 0 && slotId < font.numSfx) {
+          html += `<div style="font-size:11px;color:var(--muted);margin-bottom:6px;">Original tuning: ${patcherFormatTuning(baseSfxTunings[slotId])}</div>`;
+        }
+        html += `<div style="font-size:11px;color:var(--muted-2);margin-bottom:4px;">Click a row to select slot</div>`;
+        html += `<div style="display:grid;grid-template-columns:2.5em 1fr;gap:1px 8px;font-size:12px;">`;
+        html += `<span style="color:var(--muted-2);">Slot</span><span style="color:var(--muted-2);">Sample</span>`;
+        for (let i = 0; i < font.numSfx; i++) {
+          const d = xmlFont?.sfx[i];
+          const name = d ? (d.s || d.n) : `sfx_${i}`;
+          const usage = patcherCurrentUsage(fontId, 'sfx', i);
+          const usageLabel = usage.length ? ` <span style="color:var(--good);font-size:11px;">used in: ${usage.join(', ')}</span>` : '';
+          const searchHay = `${i} ${name} ${usage.join(' ')}`.toLowerCase();
+          if (filterText && !searchHay.includes(filterText)) continue;
+          const isSel = i === slotId;
+          const rowBg = isSel ? 'background:rgba(120,184,255,0.10);' : '';
+          const rowStyle = `${rowBg}border-radius:3px;padding:1px 2px;cursor:pointer;`;
+          html += `<span style="${rowStyle}font-family:var(--mono);" ${ROW_CLICK(i)}>${i}</span>`;
+          html += `<span style="${rowStyle}overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${name}" ${ROW_CLICK(i)}>${name}${usageLabel}</span>`;
+        }
+        html += `</div>`;
+      }
+      infoBody.innerHTML = html;
+    }
+
+    function patcherUpdateSlotLabel() {
+      const type = document.getElementById('patcherTargetType')?.value;
+      const label = document.getElementById('patcherSlotLabel');
+      const pitchWrap = document.getElementById('patcherPitchRegionWrap');
+      if (!label || !pitchWrap) return;
+      const labels = { inst: 'Inst ID', drum: 'Drum ID', sfx: 'SFX ID' };
+      label.textContent = labels[type] || 'Slot ID';
+      pitchWrap.style.display = (type === 'inst') ? '' : 'none';
+      patcherUpdateFontInfo();
+    }
+
+    function patcherUpdateLoopVisibility() {
+      const mode = document.getElementById('patcherLoopMode')?.value;
+      const wrap = document.getElementById('patcherManualLoopWrap');
+      if (!wrap) return;
+      wrap.style.visibility = (mode === 'manual') ? 'visible' : 'hidden';
+    }
+
+    function patcherSetFile(file) {
+      if (!file) return;
+      if (!file.name.toLowerCase().endsWith('.wav')) {
+        patcherSetStatus('Only .wav files are supported.', 'bad');
+        return;
+      }
+      patcher.file = file;
+      if (patcher.fileUrl) URL.revokeObjectURL(patcher.fileUrl);
+      patcher.fileUrl = URL.createObjectURL(file);
+      const nameEl = document.getElementById('patcherFileName');
+      if (nameEl) nameEl.textContent = file.name + '  (' + (file.size / 1024).toFixed(1) + ' KB)';
+      const btn = document.getElementById('patcherApplyBtn');
+      if (btn) btn.disabled = false;
+      const previewBtn = document.getElementById('patcherPreviewBtn');
+      if (previewBtn) previewBtn.disabled = false;
+      patcherSetStatus('Ready. Click "Apply patch" to send.', 'good');
+    }
+
+    function patcherSetStatus(msg, kind) {
+      const el = document.getElementById('patcherStatus');
+      if (!el) return;
+      el.textContent = msg;
+      el.style.color = kind === 'good' ? 'var(--good)' : kind === 'bad' ? 'var(--bad)' : 'var(--muted)';
+    }
+
+    async function patcherApply() {
+      if (!patcher.file) { patcherSetStatus('No file selected.', 'bad'); return; }
+
+      const fontId = parseInt(document.getElementById('patcherFontId')?.value, 10);
+      const targetType = document.getElementById('patcherTargetType')?.value;
+      const slotId = parseInt(document.getElementById('patcherSlotId')?.value, 10);
+      const pitchRegion = parseInt(document.getElementById('patcherPitchRegion')?.value, 10);
+      const tuning = parseFloat(document.getElementById('patcherTuning')?.value) || 1.0;
+      const loopMode = document.getElementById('patcherLoopMode')?.value;
+
+      if (isNaN(fontId) || isNaN(slotId)) {
+        patcherSetStatus('Invalid font/slot ID.', 'bad'); return;
+      }
+
+      const form = new FormData();
+      form.append('fontId', fontId);
+      if (targetType === 'inst') {
+        form.append('instId', slotId);
+        form.append('pitchRegion', pitchRegion);
+      } else if (targetType === 'drum') {
+        form.append('drumId', slotId);
+      } else {
+        form.append('sfxId', slotId);
+      }
+      form.append('tuning', tuning);
+
+      if (loopMode === 'infinite') {
+        form.append('loopCount', -1);
+      } else if (loopMode === 'none') {
+        form.append('loopCount', 0);
+      } else if (loopMode === 'manual') {
+        form.append('loopStart', parseInt(document.getElementById('patcherLoopStart')?.value, 10) || 0);
+        form.append('loopEnd',   parseInt(document.getElementById('patcherLoopEnd')?.value,   10) || 0);
+        form.append('loopCount', -1);
+      }
+      // loopMode === 'auto': omit loopStart/loopEnd/loopCount, server reads from smpl chunk.
+
+      form.append('wav_data', patcher.file, patcher.file.name);
+
+      const btn = document.getElementById('patcherApplyBtn');
+      if (btn) btn.disabled = true;
+      patcherSetStatus('Encoding and uploading…', '');
+
+      // Build a human-readable description for the log.
+      const fontName = patcherFontName(fontId);
+      const regionNames = ['Lo','Mid','Hi'];
+      let targetDesc;
+      if (targetType === 'inst') {
+        const iName = patcherInstName(fontId, slotId) ?? `inst ${slotId}`;
+        targetDesc = `${fontName} inst[${slotId}]=${iName} [${regionNames[pitchRegion] ?? 'Mid'}] tuning=${tuning}`;
+      } else if (targetType === 'drum') {
+        const dName = patcherDrumName(fontId, slotId) ?? `drum ${slotId}`;
+        targetDesc = `${fontName} drum[${slotId}]=${dName} tuning=${tuning}`;
+      } else {
+        const sName = patcherSfxName(fontId, slotId) ?? `sfx ${slotId}`;
+        targetDesc = `${fontName} sfx[${slotId}]=${sName} tuning=${tuning}`;
+      }
+
+      try {
+        const res = await fetch(API_BASE + '/soundfont-patch-sample', {
+          method: 'POST',
+          body: form,
+        });
+        const json = await res.json();
+        if (json.ok) {
+          const detail = `${json.numSamples} smp → ${json.adpcmBytes}B ADPCM`;
+          patcherSetStatus(`Done. ${detail}.`, 'good');
+          patcherLog(`${patcher.file.name} → ${targetDesc}  (${detail})`, 'good');
+          // Refresh font info to reflect any new region that was added.
+          setTimeout(patcherRefreshFonts, 1100);
+        } else {
+          const errMsg = json.error || 'unknown error';
+          patcherSetStatus('Error: ' + errMsg, 'bad');
+          patcherLog(`FAILED ${patcher.file.name} → ${targetDesc}: ${errMsg}`, 'bad');
+        }
+      } catch (e) {
+        patcherSetStatus('Request failed: ' + e.message, 'bad');
+        patcherLog(`FAILED ${patcher.file.name} → ${targetDesc}: ${e.message}`, 'bad');
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    }
+
+    function setupPatcherHandlers() {
+      const dropZone = document.getElementById('patcherDropZone');
+      const fileInput = document.getElementById('patcherFileInput');
+      const browseLink = document.getElementById('patcherBrowseLink');
+      const applyBtn = document.getElementById('patcherApplyBtn');
+      const previewBtn = document.getElementById('patcherPreviewBtn');
+      const targetType = document.getElementById('patcherTargetType');
+      const fontSel = document.getElementById('patcherFontId');
+      const loopMode = document.getElementById('patcherLoopMode');
+      const filterEl = document.getElementById('patcherFilter');
+      const reloadBtn = document.getElementById('patcherReloadBtn');
+      const onlyRelevantEl = document.getElementById('patcherOnlyRelevant');
+
+      if (!dropZone || !fileInput || !applyBtn) return;
+
+      dropZone.addEventListener('dragover', e => {
+        e.preventDefault();
+        dropZone.style.borderColor = 'var(--accent)';
+        dropZone.style.background = 'rgba(120,184,255,0.06)';
+      });
+      dropZone.addEventListener('dragleave', () => {
+        dropZone.style.borderColor = 'var(--line)';
+        dropZone.style.background = 'var(--bg-elev)';
+      });
+      dropZone.addEventListener('drop', e => {
+        e.preventDefault();
+        dropZone.style.borderColor = 'var(--line)';
+        dropZone.style.background = 'var(--bg-elev)';
+        const f = e.dataTransfer?.files?.[0];
+        if (f) patcherSetFile(f);
+      });
+      browseLink?.addEventListener('click', () => fileInput.click());
+      fileInput.addEventListener('change', () => {
+        if (fileInput.files?.[0]) patcherSetFile(fileInput.files[0]);
+      });
+      applyBtn.addEventListener('click', patcherApply);
+      previewBtn?.addEventListener('click', async () => {
+        if (!patcher.fileUrl) return;
+        try {
+          const audio = new Audio(patcher.fileUrl);
+          audio.volume = 0.9;
+          await audio.play();
+        } catch (e) {
+          patcherSetStatus('Preview failed: ' + e.message, 'bad');
+        }
+      });
+      targetType?.addEventListener('change', patcherUpdateSlotLabel);
+      fontSel?.addEventListener('change', patcherUpdateFontInfo);
+      loopMode?.addEventListener('change', patcherUpdateLoopVisibility);
+      filterEl?.addEventListener('input', patcherUpdateFontInfo);
+      reloadBtn?.addEventListener('click', () => patcherRefreshFonts());
+      onlyRelevantEl?.addEventListener('change', () => patcherRefreshFonts());
+      document.getElementById('patcherSlotId')?.addEventListener('input', patcherUpdateFontInfo);
+
+      patcherUpdateSlotLabel();
+      patcherUpdateLoopVisibility();
+      patcherRenderLog();
+    }
+
     function init() {
       bindElements();
       if (!hasBoundElements()) {
@@ -2308,6 +2932,7 @@
       }
 
       setupEventHandlers();
+      setupPatcherHandlers();
       renderEvents();
       renderEventSummary([]);
       window.addEventListener('beforeunload', () => {
