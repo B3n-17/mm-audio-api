@@ -442,8 +442,9 @@ RECOMP_EXPORT void AudioApi_SetSoundFontSampleBank(s32 fontId, s32 bankNum, s32 
     }
 
     if (gAudioApiInitPhase == AUDIOAPI_INIT_QUEUEING) {
+        uintptr_t staged = (u32)bankId;
         RecompQueue_PushIfNotQueued(soundFontInitQueue, AUDIOAPI_CMD_OP_SET_SAMPLEBANK,
-                                    fontId, bankNum, (void**)&bankId);
+                                    fontId, bankNum, (void**)&staged);
         return;
     }
 
@@ -464,7 +465,8 @@ RECOMP_EXPORT void AudioApi_SetSoundFontSampleBank(s32 fontId, s32 bankNum, s32 
             soundFont->sampleBank2 = bankId;
         }
     } else {
-        RecompQueue_Push(soundFontLoadQueue, AUDIOAPI_CMD_OP_SET_SAMPLEBANK, fontId, bankNum, (void**)&bankId);
+        uintptr_t staged = (u32)bankId;
+        RecompQueue_Push(soundFontLoadQueue, AUDIOAPI_CMD_OP_SET_SAMPLEBANK, fontId, bankNum, (void**)&staged);
     }
 }
 
@@ -1146,8 +1148,16 @@ bool AudioApi_GrowSoundEffectList(CustomSoundFont* soundFont) {
     return true;
 }
 
+/* All four ADSR opcodes that halt forward iteration of the envelope array.
+ * DISABLE/HANG/RESTART end evaluation; GOTO jumps backward via its `arg`. None
+ * advance past their slot, so all four are valid terminators in stored data. */
+static bool AudioApi_IsEnvelopeTerminator(s16 delay) {
+    return delay == ADSR_DISABLE || delay == ADSR_HANG ||
+           delay == ADSR_GOTO    || delay == ADSR_RESTART;
+}
+
 /* Deep-copy a Drum: copies struct, deep-copies sample (via CopySample), and copies
- * envelope array (scans for ADSR_DISABLE/ADSR_HANG terminator to determine length). */
+ * envelope array (scans for an ADSR terminator to determine length). */
 Drum* AudioApi_CopyDrum(Drum* src) {
     if (!src) return NULL;
 
@@ -1168,7 +1178,7 @@ Drum* AudioApi_CopyDrum(Drum* src) {
 
     if (src->envelope) {
         size_t envCount = 0;
-        while (src->envelope[envCount].delay != ADSR_DISABLE && src->envelope[envCount].delay != ADSR_HANG) {
+        while (!AudioApi_IsEnvelopeTerminator(src->envelope[envCount].delay)) {
             envCount++;
         }
         envCount++;
@@ -1217,7 +1227,7 @@ Instrument* AudioApi_CopyInstrument(Instrument* src) {
 
     if (src->envelope) {
         size_t envCount = 0;
-        while (src->envelope[envCount].delay != ADSR_DISABLE && src->envelope[envCount].delay != ADSR_HANG) {
+        while (!AudioApi_IsEnvelopeTerminator(src->envelope[envCount].delay)) {
             envCount++;
         }
         envCount++;

@@ -202,7 +202,7 @@ RECOMP_PATCH Acmd* AudioSynth_Update(Acmd* abiCmdStart, s32* numAbiCmds, s16* ai
  * per sequence update (3/frame), not per RSP sub-update (6/frame). */
 RECOMP_PATCH Acmd* AudioSynth_ProcessSamples(s16* aiBuf, s32 numSamplesPerUpdate, Acmd* cmd, s32 updateIndex) {
     s32 size;
-    u8 noteIndices[0x58];
+    u8 noteIndices[255];
     s16 noteCount = 0;
     s16 reverbIndex;
     SynthesisReverb* reverb;

@@ -211,8 +211,9 @@ RECOMP_EXPORT void AudioApi_ReplaceSequenceFont(s32 seqId, s32 fontNum, s32 font
         return;
     }
     if (gAudioApiInitPhase == AUDIOAPI_INIT_QUEUEING) {
+        uintptr_t staged = (u32)fontId;
         RecompQueue_PushIfNotQueued(sequenceQueue, AUDIOAPI_CMD_OP_REPLACE_SEQUENCE_FONT,
-                                     seqId, fontNum, (void**)&fontId);
+                                     seqId, fontNum, (void**)&staged);
         return;
     }
     if (seqId >= gAudioCtx.sequenceTable->header.numEntries || fontNum >= MAX_FONTS_PER_SEQUENCE) {
@@ -271,8 +272,10 @@ RECOMP_EXPORT void AudioApi_SetSequenceFlags(s32 seqId, u8 flags) {
         return;
     }
     if (gAudioApiInitPhase == AUDIOAPI_INIT_QUEUEING) {
+        // Stage through pointer-sized storage: queue copies sizeof(void*) from &data.
+        uintptr_t staged = flags;
         RecompQueue_PushIfNotQueued(sequenceQueue, AUDIOAPI_CMD_OP_SET_SEQUENCE_FLAGS,
-                                     seqId, 0, (void**)&flags);
+                                     seqId, 0, (void**)&staged);
         return;
     }
     AudioApi_SetSequenceFlagsInternal(seqId, flags);

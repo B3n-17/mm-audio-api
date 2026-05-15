@@ -82,7 +82,8 @@ RECOMP_HOOK("AudioThread_ProcessGlobalCmd") void AudioApi_ProcessGlobalCmd(Audio
  * arg1 used for setup subOp. seqId stored in pointer-width field via RecompQueue_Push. */
 RECOMP_EXPORT void AudioApi_QueueExtendedSeqCmd(u32 op, u32 cmd, u32 arg1, s32 seqId) {
     cmd |= (op & 0xF) << 28;
-    RecompQueue_Push(sAudioSeqCmdQueue, op, cmd, arg1, (void**)&seqId);
+    uintptr_t staged = (u32)seqId;
+    RecompQueue_Push(sAudioSeqCmdQueue, op, cmd, arg1, (void**)&staged);
     AudioApi_DebugEvent(AUDIOAPI_DEBUG_EVENT_QUEUE_EXT_CMD, op, seqId, cmd, arg1);
 }
 
