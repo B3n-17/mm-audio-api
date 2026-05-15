@@ -20,8 +20,8 @@ void ZipFile::open() {
 }
 
 void ZipFile::close() {
+    std::lock_guard<std::mutex> lock(mutex);
     if (info.compressed) {
-        std::lock_guard<std::mutex> lock(mutex);
         buffer.resize(0);
     }
     curPos = 0;
