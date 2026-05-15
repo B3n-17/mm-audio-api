@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - [mem-leak] `ZipArchive` leaked `mz_zip_archive` on init failure and never called `mz_zip_reader_end` (no destructor)
 - [debug menu] crash safe-guards
 - [vadpcm encode] Out-of-bounds read in loop-predictor pass when `loopStart` exceeds padded sample length
+- [soundfont] `AudioLoad_RelocateSample` re-relocated already-relocated samples when `isRelocated` was stale (KSEG0 `sampleAddr` with `isRelocated=0`); restored vanilla's outer KSEG0 guard to skip re-entry
 
 ## [0.8.4] - 2026-03-21
 ### Added

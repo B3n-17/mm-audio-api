@@ -970,6 +970,12 @@ RECOMP_PATCH void AudioLoad_RelocateFont(s32 fontId, void* fontDataStartAddr, Sa
  * Sets sample->isRelocated=true to prevent double-relocation.
  */
 RECOMP_PATCH void AudioLoad_RelocateSample(TunedSample* tunedSample, void* fontData, SampleBankRelocInfo* sampleBankReloc) {
+    // Skip if the sample pointer is already a RAM address. Mirrors the vanilla outer guard
+    // (mm-decomp load.c:1786, `sample <= AUDIO_RELOCATED_ADDRESS_START`)
+    if (IS_KSEG0(tunedSample->sample)) {
+        return;
+    }
+
     Sample* sample = tunedSample->sample = RELOC_TO_RAM(tunedSample->sample, fontData);
     uintptr_t baseAddr;
 
