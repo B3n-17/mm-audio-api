@@ -226,6 +226,10 @@ static void AudioApi_DebugPushFontInfos(void) {
         return;
     }
 
+    if (gAudioCtx.soundFontTable == NULL || gAudioCtx.soundFontList == NULL) {
+        return;
+    }
+
     sFontInfoPushCounter++;
     if (sFontInfoPushCounter < FONT_INFO_PUSH_INTERVAL) {
         return;
@@ -333,6 +337,10 @@ static void AudioApi_DebugApplySamplePatch(void) {
     SoundEffect sfx;
 
     if (!gAudioApiDebugHttpEnabled) {
+        return;
+    }
+
+    if (gAudioCtx.soundFontTable == NULL || gAudioCtx.soundFontList == NULL) {
         return;
     }
 

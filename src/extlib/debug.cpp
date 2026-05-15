@@ -607,6 +607,7 @@ static EncodedSample encodePcmToVadpcm(const int16_t* pcm, size_t numSamples, ui
     // Compute predictor state at loop point if looping.
     if (loopPoints.loopCount != 0 && loopPoints.loopEnd > loopPoints.loopStart) {
         uint32_t loopFrame = loopPoints.loopStart / VADPCM_SAMPLES_FRAME;
+        if (loopFrame > numFrames) loopFrame = static_cast<uint32_t>(numFrames);
         state = {};
         for (uint32_t f = 0; f < loopFrame; f++) {
             venc_encodeframe(result.adpcmData.data() + f * VADPCM_FRAME_SIZE,
@@ -722,6 +723,12 @@ static std::string readHttpRequest(SocketHandle client) {
         try {
             contentLength = static_cast<size_t>(std::stoull(lowerHeaders.substr(valPos)));
         } catch (...) {}
+    }
+
+    // Reject oversized bodies before we allocate for them.
+    constexpr size_t kMaxBodyBytes = 32 * 1024 * 1024;
+    if (contentLength > kMaxBodyBytes) {
+        return std::string();
     }
 
     // Keep reading until we have the full body.
@@ -881,6 +888,14 @@ static std::string handleSamplePatch(const std::string& request) {
     uint32_t sampleRate = wav.sampleRate;
     uint32_t channels   = wav.channels;
     uint64_t frameCount = wav.totalPCMFrameCount;
+
+    // Reject WAVs whose declared size would blow up the int16 PCM buffer.
+    // 64 MB of int16 = 32M samples; e.g. ~6 minutes of 44.1 kHz stereo.
+    constexpr uint64_t kMaxPcmSamples = (64ULL * 1024 * 1024) / sizeof(int16_t);
+    if (channels == 0 || frameCount == 0 || frameCount > kMaxPcmSamples / channels) {
+        drwav_uninit(&wav);
+        return "{\"error\":\"WAV too large or malformed\"}";
+    }
 
     std::vector<int16_t> pcm(static_cast<size_t>(frameCount * channels));
     drwav_uint64 read = drwav_read_pcm_frames_s16(&wav, frameCount, pcm.data());

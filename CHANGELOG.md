@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - [mem-leak] `CacheStrategy::Default` never resolved to `PreloadOnUse` on `Audiofile`/`Generic`/`SampleBank`
 - [decoder] TOCTOU use-after-free between audio thread `decode()` and GC worker `close()` after stream idle
 - [mem-leak] `ZipArchive` leaked `mz_zip_archive` on init failure and never called `mz_zip_reader_end` (no destructor)
+- [debug menu] crash safe-guards
+- [vadpcm encode] Out-of-bounds read in loop-predictor pass when `loopStart` exceeds padded sample length
 
 ## [0.8.4] - 2026-03-21
 ### Added
