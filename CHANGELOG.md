@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - [custom soundfonts] Out-of-bounds read when deep-copying custom envelopes terminated by `ADSR_GOTO` / `ADSR_RESTART`
 - [polyphony] Audio-thread stack corruption when `numNotes > 88` (`noteIndices` array sized to support full 255-note range)
 - [no effect] AudioApi_SetSequenceFlags uninitialized data
+- [mem-leak] `CacheStrategy::Default` never resolved to `PreloadOnUse` on `Audiofile`/`Generic`/`SampleBank`
 
 ## [0.8.4] - 2026-03-21
 ### Added

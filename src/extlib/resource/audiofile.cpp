@@ -28,8 +28,8 @@ Audiofile::Audiofile(std::shared_ptr<Vfs::File> file, Decoder::Type type, CacheS
     decoder = Decoder::factory(file, type);
     metadata = decoder->metadata;
 
-    if (cacheStrategy == CacheStrategy::Default) {
-        cacheStrategy = CacheStrategy::PreloadOnUse;
+    if (this->cacheStrategy == CacheStrategy::Default) {
+        this->cacheStrategy = CacheStrategy::PreloadOnUse;
     }
 }
 

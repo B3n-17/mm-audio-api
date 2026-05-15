@@ -5,12 +5,7 @@
 namespace Resource {
 
 SampleBank::SampleBank(std::shared_ptr<Vfs::File> file, CacheStrategy cacheStrategy)
-    : Generic(file, cacheStrategy) {
-
-    if (cacheStrategy == CacheStrategy::Default) {
-        cacheStrategy = CacheStrategy::PreloadOnUse;
-    }
-}
+    : Generic(file, cacheStrategy) {}
 
 SampleBank::~SampleBank() {
     close();

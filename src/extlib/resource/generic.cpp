@@ -9,8 +9,8 @@ constexpr int FILE_TTL_SECONDS = 30;
 Generic::Generic(std::shared_ptr<Vfs::File> file, CacheStrategy cacheStrategy)
     : file(file), cacheStrategy(cacheStrategy) {
 
-    if (cacheStrategy == CacheStrategy::Default) {
-        cacheStrategy = CacheStrategy::PreloadOnUse;
+    if (this->cacheStrategy == CacheStrategy::Default) {
+        this->cacheStrategy = CacheStrategy::PreloadOnUse;
     }
 }
 
