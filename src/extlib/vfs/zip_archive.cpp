@@ -69,24 +69,29 @@ std::shared_ptr<ZipArchive> ZipArchive::factory(fs::path path) {
     return archive;
 }
 
-void ZipArchive::init() {
-    mz_zip_archive* mz_archive = new mz_zip_archive;
-    mz_zip_error mz_error;
-    mz_bool mz_status;
+ZipArchive::~ZipArchive() {
+    if (mz_archive != nullptr) {
+        auto* mz = static_cast<mz_zip_archive*>(mz_archive);
+        mz_zip_reader_end(mz);
+        delete mz;
+        mz_archive = nullptr;
+    }
+}
 
-    memset(mz_archive, 0, sizeof(mz_zip_archive));
+void ZipArchive::init() {
+    auto mz_archive = std::make_unique<mz_zip_archive>();
+
+    memset(mz_archive.get(), 0, sizeof(mz_zip_archive));
 
     mz_archive->m_pIO_opaque = this;
     mz_archive->m_pRead = ZipArchive::onRead;
 
-    mz_status = mz_zip_reader_init(mz_archive, filesize, 0);
-
-    if (!mz_status) {
-        mz_error = mz_zip_get_last_error(mz_archive);
+    if (!mz_zip_reader_init(mz_archive.get(), filesize, 0)) {
+        mz_zip_error mz_error = mz_zip_get_last_error(mz_archive.get());
         throw std::runtime_error("Zip archive error: " + std::string(mz_zip_get_error_string(mz_error)));
     }
 
-    this->mz_archive = static_cast<void*>(mz_archive);
+    this->mz_archive = static_cast<void*>(mz_archive.release());
 }
 
 ZipArchive::FileInfo ZipArchive::locateFile(std::string path) {

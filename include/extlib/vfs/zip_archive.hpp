@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <filesystem>
 #include <memory>
 #include <mutex>
@@ -15,6 +16,7 @@ namespace Vfs {
 class ZipArchive {
 public:
     ZipArchive() = delete;
+    ~ZipArchive();
 
     static std::shared_ptr<ZipArchive> factory(fs::path path);
 
@@ -35,7 +37,7 @@ private:
 
     ZipArchive(Private, fs::path path);
 
-    void* mz_archive;
+    void* mz_archive = nullptr;
     size_t filesize;
     fs::path path;
     std::vector<uint8_t> data;
