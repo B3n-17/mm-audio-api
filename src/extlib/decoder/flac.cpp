@@ -10,11 +10,11 @@
 namespace Decoder {
 
 void Flac::open() {
+    std::unique_lock<std::mutex> lock(mutex);
+
     if (decoder != nullptr) {
         return;
     }
-
-    std::unique_lock<std::mutex> lock(mutex);
 
     decoder = firstOpen
         ? drflac_open_with_metadata(Flac::onRead, Flac::onSeek, Flac::onTell, Flac::onMeta, this, nullptr)
@@ -28,22 +28,23 @@ void Flac::open() {
 }
 
 void Flac::close() {
+    std::unique_lock<std::mutex> lock(mutex);
+
     if (decoder == nullptr) {
         return;
     }
 
-    std::unique_lock<std::mutex> lock(mutex);
     drflac_close(decoder);
     decoder = nullptr;
     pos.store(0);
 }
 
 void Flac::probe() {
+    std::unique_lock<std::mutex> lock(mutex);
+
     if (decoder == nullptr) {
         throw std::runtime_error("Decoder error: not open");
     }
-
-    std::unique_lock<std::mutex> lock(mutex);
 
     metadata->setTrackCount(decoder->channels);
     metadata->setSampleRate(decoder->sampleRate);
@@ -52,11 +53,11 @@ void Flac::probe() {
 }
 
 long Flac::decode(std::vector<int16_t>* buffer, size_t count, size_t offset) {
+    std::unique_lock<std::mutex> lock(mutex);
+
     if (decoder == nullptr) {
         throw std::runtime_error("Decoder error: not open");
     }
-
-    std::unique_lock<std::mutex> lock(mutex);
 
     size_t framesToRead = std::min(count, metadata->sampleCount - offset);
 

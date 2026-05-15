@@ -10,11 +10,11 @@
 namespace Decoder {
 
 void Mp3::open() {
+    std::unique_lock<std::mutex> lock(mutex);
+
     if (decoder != nullptr) {
         return;
     }
-
-    std::unique_lock<std::mutex> lock(mutex);
 
     decoder = new drmp3;
 
@@ -32,11 +32,12 @@ void Mp3::open() {
 }
 
 void Mp3::close() {
+    std::unique_lock<std::mutex> lock(mutex);
+
     if (decoder == nullptr) {
         return;
     }
 
-    std::unique_lock<std::mutex> lock(mutex);
     drmp3_uninit(decoder);
     delete decoder;
     decoder = nullptr;
@@ -44,11 +45,11 @@ void Mp3::close() {
 }
 
 void Mp3::probe() {
+    std::unique_lock<std::mutex> lock(mutex);
+
     if (decoder == nullptr) {
         throw std::runtime_error("Decoder error: not open");
     }
-
-    std::unique_lock<std::mutex> lock(mutex);
 
     metadata->setTrackCount(decoder->channels);
     metadata->setSampleRate(decoder->sampleRate);
@@ -57,11 +58,11 @@ void Mp3::probe() {
 }
 
 long Mp3::decode(std::vector<int16_t>* buffer, size_t count, size_t offset) {
+    std::unique_lock<std::mutex> lock(mutex);
+
     if (decoder == nullptr) {
         throw std::runtime_error("Decoder error: not open");
     }
-
-    std::unique_lock<std::mutex> lock(mutex);
 
     size_t framesToRead = std::min(count, metadata->sampleCount - offset);
 

@@ -11,6 +11,8 @@ static const ov_callbacks callbacks = {
 };
 
 void Vorbis::open() {
+    std::unique_lock<std::mutex> lock(mutex);
+
     if (decoder != nullptr) {
         return;
     }
@@ -28,9 +30,12 @@ void Vorbis::open() {
 }
 
 void Vorbis::close() {
+    std::unique_lock<std::mutex> lock(mutex);
+
     if (decoder == nullptr) {
         return;
     }
+
     ov_clear(decoder);
     delete decoder;
     decoder = nullptr;
@@ -38,11 +43,11 @@ void Vorbis::close() {
 }
 
 void Vorbis::probe() {
+    std::unique_lock<std::mutex> lock(mutex);
+
     if (decoder == nullptr) {
         throw std::runtime_error("Decoder error: not open");
     }
-
-    std::unique_lock<std::mutex> lock(mutex);
 
     vorbis_info* vi = ov_info(decoder, -1);
     if (vi == nullptr) {
@@ -64,11 +69,11 @@ void Vorbis::probe() {
 }
 
 long Vorbis::decode(std::vector<int16_t>* buffer, size_t count, size_t offset) {
+    std::unique_lock<std::mutex> lock(mutex);
+
     if (decoder == nullptr) {
         throw std::runtime_error("Decoder error: not open");
     }
-
-    std::unique_lock<std::mutex> lock(mutex);
 
     int16_t* ptr = buffer->data();
     size_t framesToRead = std::min(count, metadata->sampleCount - offset);

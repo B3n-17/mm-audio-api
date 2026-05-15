@@ -11,11 +11,11 @@ static const OpusFileCallbacks callbacks = {
 };
 
 void Opus::open() {
+    std::unique_lock<std::mutex> lock(mutex);
+
     if (decoder != nullptr) {
         return;
     }
-
-    std::unique_lock<std::mutex> lock(mutex);
 
     int result = 0;
     decoder = op_open_callbacks(this, &callbacks, nullptr, 0, &result);
@@ -27,22 +27,23 @@ void Opus::open() {
 }
 
 void Opus::close() {
+    std::unique_lock<std::mutex> lock(mutex);
+
     if (decoder == nullptr) {
         return;
     }
 
-    std::unique_lock<std::mutex> lock(mutex);
     op_free(decoder);
     decoder = nullptr;
     pos.store(0);
 }
 
 void Opus::probe() {
+    std::unique_lock<std::mutex> lock(mutex);
+
     if (decoder == nullptr) {
         throw std::runtime_error("Decoder error: not open");
     }
-
-    std::unique_lock<std::mutex> lock(mutex);
 
     const OpusHead* head = op_head(decoder, -1);
     if (head == nullptr) {
@@ -64,11 +65,11 @@ void Opus::probe() {
 }
 
 long Opus::decode(std::vector<int16_t>* buffer, size_t count, size_t offset) {
+    std::unique_lock<std::mutex> lock(mutex);
+
     if (decoder == nullptr) {
         throw std::runtime_error("Decoder error: not open");
     }
-
-    std::unique_lock<std::mutex> lock(mutex);
 
     int16_t* ptr = buffer->data();
     size_t framesToRead = std::min(count, metadata->sampleCount - offset);

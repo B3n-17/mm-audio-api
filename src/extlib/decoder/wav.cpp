@@ -10,11 +10,11 @@
 namespace Decoder {
 
 void Wav::open() {
+    std::unique_lock<std::mutex> lock(mutex);
+
     if (decoder != nullptr) {
         return;
     }
-
-    std::unique_lock<std::mutex> lock(mutex);
 
     decoder = new drwav;
 
@@ -32,11 +32,12 @@ void Wav::open() {
 }
 
 void Wav::close() {
+    std::unique_lock<std::mutex> lock(mutex);
+
     if (decoder == nullptr) {
         return;
     }
 
-    std::unique_lock<std::mutex> lock(mutex);
     drwav_uninit(decoder);
     delete decoder;
     decoder = nullptr;
@@ -44,11 +45,11 @@ void Wav::close() {
 }
 
 void Wav::probe() {
+    std::unique_lock<std::mutex> lock(mutex);
+
     if (decoder == nullptr) {
         throw std::runtime_error("Decoder error: not open");
     }
-
-    std::unique_lock<std::mutex> lock(mutex);
 
     metadata->setTrackCount(decoder->channels);
     metadata->setSampleRate(decoder->sampleRate);
@@ -92,11 +93,11 @@ void Wav::probe() {
 }
 
 long Wav::decode(std::vector<int16_t>* buffer, size_t count, size_t offset) {
+    std::unique_lock<std::mutex> lock(mutex);
+
     if (decoder == nullptr) {
         throw std::runtime_error("Decoder error: not open");
     }
-
-    std::unique_lock<std::mutex> lock(mutex);
 
     size_t framesToRead = std::min(count, metadata->sampleCount - offset);
 
