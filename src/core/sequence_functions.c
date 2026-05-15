@@ -1148,12 +1148,18 @@ RECOMP_PATCH void Audio_PlayAmbience(u8 ambienceId) {
 RECOMP_EXPORT void AudioApi_PlayFanfare(s32 seqId, u16 seqArgs) {
     s32 prevSeqId = AudioApi_GetActiveSeqId(SEQ_PLAYER_FANFARE);
     u32 outNumFonts;
-    u8* prevFontId = AudioThread_GetFontsForSequence(prevSeqId, &outNumFonts);
-    u8* fontId = AudioThread_GetFontsForSequence(seqId, &outNumFonts);
+    u8* fontId = AudioApi_IsSequenceRegistered(seqId)
+                     ? AudioThread_GetFontsForSequence(seqId, &outNumFonts) : NULL;
+    u8* prevFontId = AudioApi_IsSequenceRegistered(prevSeqId)
+                         ? AudioThread_GetFontsForSequence(prevSeqId, &outNumFonts) : NULL;
 
-    AudioApi_DebugEvent(AUDIOAPI_DEBUG_EVENT_PLAY_FANFARE, seqId, seqArgs, prevSeqId, *fontId);
+    AudioApi_DebugEvent(AUDIOAPI_DEBUG_EVENT_PLAY_FANFARE, seqId, seqArgs, prevSeqId,
+                        fontId != NULL ? *fontId : 0xFF);
 
-    if ((prevSeqId == NA_BGM_DISABLED) || (*prevFontId == *fontId)) {
+    // Cross-fade only when both sequences share a font. If either lookup failed
+    // (invalid seqId or zero-font sequence), fall through to the stop-then-start path.
+    if ((prevSeqId == NA_BGM_DISABLED) ||
+        (fontId != NULL && prevFontId != NULL && *prevFontId == *fontId)) {
         sFanfareState = 1;
     } else {
         sFanfareState = 5;

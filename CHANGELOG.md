@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - [debug menu] crash safe-guards
 - [vadpcm encode] Out-of-bounds read in loop-predictor pass when `loopStart` exceeds padded sample length
 - [soundfont] `AudioLoad_RelocateSample` re-relocated already-relocated samples when `isRelocated` was stale (KSEG0 `sampleAddr` with `isRelocated=0`); restored vanilla's outer KSEG0 guard to skip re-entry
+- `AudioApi_PlayFanfare` / async `PLAY_SEQUENCE` dereferenced `AudioThread_GetFontsForSequence` without bounds- or NULL-checking seqId, causing OOB reads on unregistered seqIds and NULL deref on zero-font sequences
 
 ## [0.8.4] - 2026-03-21
 ### Added

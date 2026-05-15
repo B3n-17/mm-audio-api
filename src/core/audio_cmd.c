@@ -34,6 +34,21 @@ extern void AudioSeq_ProcessSeqCmd(u32 cmd);
 extern void AudioThread_SetFadeInTimer(s32 seqPlayerIndex, s32 fadeTimer);
 extern AudioTable* AudioLoad_GetLoadTable(s32 tableType);
 
+// AudioThread_GetFontsForSequence reads sequenceFontTable[seqId] with no bounds check
+// and returns NULL for zero-font sequences. Validate before dereferencing.
+static u8* AudioApi_SafeGetFirstFontId(s32 seqId) {
+    AudioTable* table = AudioLoad_GetLoadTable(SEQUENCE_TABLE);
+    u32 outNumFonts;
+    u8* fontIds;
+
+    if (seqId < 0 || (u32)seqId >= (u32)table->header.numEntries ||
+        table->entries[seqId].romAddr == 0) {
+        return NULL;
+    }
+    fontIds = AudioThread_GetFontsForSequence(seqId, &outNumFonts);
+    return fontIds;
+}
+
 RecompQueue* sAudioSeqCmdQueue;
 
 RECOMP_CALLBACK(".", AudioApi_InitInternal) void AudioApi_AudioCmdInit() {
@@ -111,7 +126,6 @@ void AudioApi_ProcessSeqCmd(RecompQueueCmd* cmd) {
     u8 seqArgs;
     u8 found;
     u8 i;
-    u32 outNumFonts;
 
     seqPlayerIndex = (cmd->arg0 & SEQCMD_SEQPLAYER_MASK) >> 24;
     AudioApi_DebugEvent(AUDIOAPI_DEBUG_EVENT_PROCESS_SEQ_CMD, cmd->op, seqPlayerIndex, cmd->asInt, cmd->arg0);
@@ -131,22 +145,30 @@ void AudioApi_ProcessSeqCmd(RecompQueueCmd* cmd) {
             if (seqArgs < 0x80) {
                 AudioApi_StartSequence(seqPlayerIndex, seqId, seqArgs, fadeTimer);
             } else {
+                u8* fontIds = AudioApi_SafeGetFirstFontId(seqId);
+                u8* prevFontIds;
+
+                // Can't async-load fonts for a seq with no/invalid font table entry — skip.
+                if (fontIds == NULL) {
+                    break;
+                }
+
                 cmd->arg0 = (cmd->arg0 & ~(SEQ_FLAG_ASYNC | SEQCMD_ASYNC_ACTIVE)) + SEQCMD_ASYNC_ACTIVE;
                 gExtActiveSeqs[seqPlayerIndex].startAsyncSeqCmd = *cmd;
 
                 gActiveSeqs[seqPlayerIndex].isWaitingForFonts = true;
-                gActiveSeqs[seqPlayerIndex].fontId = *AudioThread_GetFontsForSequence(seqId, &outNumFonts);
+                gActiveSeqs[seqPlayerIndex].fontId = *fontIds;
                 AudioSeq_StopSequence(seqPlayerIndex, 1);
 
                 if (gExtActiveSeqs[seqPlayerIndex].prevSeqId != NA_BGM_DISABLED) {
-                    if (*AudioThread_GetFontsForSequence(seqId, &outNumFonts) !=
-                        *AudioThread_GetFontsForSequence(gExtActiveSeqs[seqPlayerIndex].prevSeqId, &outNumFonts)) {
+                    prevFontIds = AudioApi_SafeGetFirstFontId(gExtActiveSeqs[seqPlayerIndex].prevSeqId);
+                    // If prev seq lookup failed, treat as font mismatch (safe default: discard).
+                    if (prevFontIds == NULL || *fontIds != *prevFontIds) {
                         AUDIOCMD_EXTENDED_GLOBAL_DISCARD_SEQ_FONTS(seqId);
                     }
                 }
 
-                AUDIOCMD_GLOBAL_ASYNC_LOAD_FONT(*AudioThread_GetFontsForSequence(seqId, &outNumFonts),
-                                                (u8)((seqPlayerIndex + 1) & 0xFF));
+                AUDIOCMD_GLOBAL_ASYNC_LOAD_FONT(*fontIds, (u8)((seqPlayerIndex + 1) & 0xFF));
             }
         }
         break;
