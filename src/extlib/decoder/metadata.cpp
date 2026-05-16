@@ -198,8 +198,12 @@ void Metadata::parseId3v2(const uint8_t* data, size_t size) {
                 break;
             case 1: // UTF-16 with BOM
             case 2: // UTF-16BE
-                data = utf8::utf16to8(std::u16string(reinterpret_cast<const char16_t*>(p + 1), (frameSize - 1) / 2));
+            {
+                std::u16string u16((frameSize - 1) / 2, u'\0');
+                std::memcpy(u16.data(), p + 1, u16.size() * sizeof(char16_t));
+                data = utf8::utf16to8(u16);
                 break;
+            }
             default:
                 break;
             }

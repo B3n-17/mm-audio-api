@@ -9,6 +9,24 @@
 
 namespace Vfs {
 
+static bool hasParentRefComponent(const fs::path& p) {
+    for (const auto& component : p) {
+        if (component == "..") {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool isContainedIn(const fs::path& path, const fs::path& base) {
+    if (path == base) {
+        return true;
+    }
+    std::error_code ec;
+    auto relative = fs::relative(path, base, ec);
+    return !ec && !relative.empty() && !hasParentRefComponent(relative);
+}
+
 void Filesystem::setDefaultDir(fs::path dir) {
     defaultDir = dir.lexically_normal();
 }
@@ -20,15 +38,20 @@ void Filesystem::addAllowedDir(fs::path dir) {
 bool Filesystem::isPathAllowed(fs::path path) {
     fs::path normalized = path.lexically_normal();
 
+    std::error_code canonEc;
+    fs::path canonical = fs::weakly_canonical(normalized, canonEc);
+    if (canonEc) {
+        canonical.clear();
+    }
+
     for (const auto& allowed : allowedDirs) {
-        if (normalized == allowed) {
-            return true;
+        if (!isContainedIn(normalized, allowed)) {
+            continue;
         }
-
-        std::error_code ec;
-        auto relative = fs::relative(normalized, allowed, ec);
-
-        if (!ec && !relative.empty() && relative.string().find("..") == std::string::npos) {
+        // Lexical containment passed. If we were able to resolve symlinks,
+        // require the canonical path to still be contained — otherwise a
+        // symlink inside `allowed` pointing outside it would escape.
+        if (canonical.empty() || isContainedIn(canonical, allowed)) {
             return true;
         }
     }
@@ -81,7 +104,7 @@ std::shared_ptr<File> Filesystem::openFile(std::u8string baseDirStr, std::u8stri
     }
 
     auto relativePath = fs::path(pathStr).lexically_normal();
-    if (relativePath.empty() || relativePath.string().find("..") != std::string::npos) {
+    if (relativePath.empty() || !relativePath.is_relative() || hasParentRefComponent(relativePath)) {
         throw std::filesystem::filesystem_error("Path not child of base dir", relativePath, baseDir, std::error_code());
     }
 
@@ -94,6 +117,9 @@ std::shared_ptr<File> Filesystem::openFile(std::u8string baseDirStr, std::u8stri
     }
 
     auto fullPath = baseDir / relativePath;
+    if (!isPathAllowed(fullPath)) {
+        throw std::filesystem::filesystem_error("Path not child of base dir", fullPath, baseDir, std::error_code());
+    }
     return std::make_shared<NativeFile>(fullPath);
 }
 
