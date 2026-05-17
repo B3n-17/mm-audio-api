@@ -109,6 +109,13 @@ static s32 AudioApi_CreateStreamedSequenceImpl(AudioApiFileInfo* info, AudioApiS
         return -1;
     }
 
+    /* Reject degenerate inputs: zero-length samples or zero sample rate would make
+     * the tatum-length computation round to 0, causing cseq_delay(seq, length - 1)
+     * to wrap to 0xFFFF and stall the sequence for the maximum delay. */
+    if (info->sampleCount == 0 || info->sampleRate == 0 || info->trackCount == 0) {
+        return -1;
+    }
+
     /* One channel per decoded track (max 16 channels). */
     if (info->channelType == AUDIOAPI_CHANNEL_TYPE_MONO) {
         trackCount = MIN(info->trackCount, 16);
@@ -159,9 +166,12 @@ static s32 AudioApi_CreateStreamedSequenceImpl(AudioApiFileInfo* info, AudioApiS
     if (info->loopCount == -1) {
         length = 0x7FFF;
     } else {
-        length = lceilf((info->loopCount + 1) * ((f32)info->sampleCount / info->sampleRate) *
-                        (TATUMS_PER_BEAT * 25.0f / 60.0f));
-        length = CLAMP(length, 0, 0x7FFF);
+        /* Clamp in a wide type before narrowing to u16; lceilf returns long and
+         * a direct assignment would wrap mod 65536, slipping past CLAMP. */
+        long lengthWide = lceilf((info->loopCount + 1) * ((f32)info->sampleCount / info->sampleRate) *
+                                 (TATUMS_PER_BEAT * 25.0f / 60.0f));
+        lengthWide = CLAMP(lengthWide, 0, 0x7FFF);
+        length = (u16)lengthWide;
 
         if (seqIO == AUDIOAPI_SEQ_IO_CREDITS_1) {
             length = MAX(length, CREDITS_PART1_TOTAL_TATUMS + 1);
@@ -172,6 +182,9 @@ static s32 AudioApi_CreateStreamedSequenceImpl(AudioApiFileInfo* info, AudioApiS
 
     /* Step 3: Build CSeq binary — sequence header, channel commands, layer note data. */
     root = cseq_create();
+    if (root == NULL) {
+        return -1;
+    }
     seq = cseq_sequence_create(root);
 
     initChanMask = (1 << channelCount) - 1;

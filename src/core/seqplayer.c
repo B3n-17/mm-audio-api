@@ -858,10 +858,6 @@ RECOMP_PATCH void AudioScript_SequencePlayerProcessSequence(SequencePlayer* seqP
 
     // @mod use seqId obtained from getter
     if (!AudioLoad_IsSeqLoadComplete(seqId) || !AudioLoad_IsFontLoadComplete(seqPlayer->defaultFont)) {
-        // These function calls serve no purpose
-        if (AudioLoad_IsSeqLoadComplete(seqId)) {}
-        if (AudioLoad_IsSeqLoadComplete(seqPlayer->defaultFont)) {}
-
         AudioScript_SequencePlayerDisable(seqPlayer);
         return;
     }

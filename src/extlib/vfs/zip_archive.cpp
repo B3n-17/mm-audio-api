@@ -37,7 +37,7 @@ ZipArchive::ZipArchive(ZipArchive::Private, fs::path path)
 
     data.resize(filesize);
     stream.read(reinterpret_cast<char*>(data.data()), filesize);
-    if (stream.fail() && !stream.eof()) {
+    if (static_cast<size_t>(stream.gcount()) != filesize) {
         throw std::runtime_error("Could not read zip file");
     }
 }

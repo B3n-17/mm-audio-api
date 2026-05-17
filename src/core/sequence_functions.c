@@ -304,12 +304,16 @@ RECOMP_EXPORT void AudioApi_StartSequence(u8 seqPlayerIndex, s32 seqId, u16 seqA
         AudioApi_DebugEvent(AUDIOAPI_DEBUG_EVENT_START_SEQUENCE, seqPlayerIndex, seqId, seqArgs, fadeInDuration);
         seqArgs &= 0x7F;
         if (seqArgs == 0x7F) {
-            // fadeInDuration interpreted as seconds, 60 is refresh rate and does not account for PAL
-            skipTicks = (fadeInDuration >> 3) * 60 * gAudioCtx.audioBufferParameters.updatesPerFrame;
+            // fadeInDuration interpreted as seconds, 60 is refresh rate and does not account for PAL.
+            // Wire format is u16; saturate to avoid silent truncation when updatesPerFrame >= 4 and
+            // fadeInDuration is large.
+            u32 skipTicks32 = ((u32)fadeInDuration >> 3) * 60u * gAudioCtx.audioBufferParameters.updatesPerFrame;
+            skipTicks = (skipTicks32 > 0xFFFFu) ? 0xFFFFu : (u16)skipTicks32;
             AUDIOCMD_EXTENDED_GLOBAL_INIT_SEQPLAYER_SKIP_TICKS(seqPlayerIndex, seqId, skipTicks);
         } else {
             // fadeInDuration interpreted as 1/30th of a second, does not account for change in refresh rate for PAL
-            fadeInDuration = (fadeInDuration * (u16)gAudioCtx.audioBufferParameters.updatesPerFrame) / 4;
+            u32 fade32 = ((u32)fadeInDuration * gAudioCtx.audioBufferParameters.updatesPerFrame) / 4u;
+            fadeInDuration = (fade32 > 0xFFFFu) ? 0xFFFFu : (u16)fade32;
             AUDIOCMD_EXTENDED_GLOBAL_INIT_SEQPLAYER(seqPlayerIndex, seqId, fadeInDuration);
         }
 

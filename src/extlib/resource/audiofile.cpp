@@ -69,7 +69,7 @@ std::shared_ptr<std::vector<int16_t>> Audiofile::getChunk(size_t offset) {
 
     open();
 
-    size_t framesToRead = std::min(CHUNK_SIZE, metadata->sampleCount - offset - 1);
+    size_t framesToRead = std::min(CHUNK_SIZE, metadata->sampleCount - offset);
     auto buffer = std::make_shared<std::vector<int16_t>>(framesToRead * metadata->trackCount);
 
     size_t framesRead = decoder->decode(buffer.get(), framesToRead, offset);
