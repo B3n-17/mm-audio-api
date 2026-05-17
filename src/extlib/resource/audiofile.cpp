@@ -67,16 +67,24 @@ std::shared_ptr<std::vector<int16_t>> Audiofile::getChunk(size_t offset) {
         }
     }
 
-    open();
+    inFlight.fetch_add(1, std::memory_order_acq_rel);
+    std::shared_ptr<std::vector<int16_t>> buffer;
+    try {
+        open();
 
-    size_t framesToRead = std::min(CHUNK_SIZE, metadata->sampleCount - offset);
-    auto buffer = std::make_shared<std::vector<int16_t>>(framesToRead * metadata->trackCount);
+        size_t framesToRead = std::min(CHUNK_SIZE, metadata->sampleCount - offset);
+        buffer = std::make_shared<std::vector<int16_t>>(framesToRead * metadata->trackCount);
 
-    size_t framesRead = decoder->decode(buffer.get(), framesToRead, offset);
+        size_t framesRead = decoder->decode(buffer.get(), framesToRead, offset);
 
-    if (framesRead != framesToRead) {
-        throw std::runtime_error("Not enough samples read");
+        if (framesRead != framesToRead) {
+            throw std::runtime_error("Not enough samples read");
+        }
+    } catch (...) {
+        inFlight.fetch_sub(1, std::memory_order_acq_rel);
+        throw;
     }
+    inFlight.fetch_sub(1, std::memory_order_acq_rel);
 
     std::unique_lock<std::shared_mutex> cacheLock(cacheMutex);
     cache[offset] = buffer;
@@ -176,6 +184,9 @@ void Audiofile::gc() {
 
     auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - atime);
     if (elapsed.count() > FILE_TTL_SECONDS) {
+        if (inFlight.load(std::memory_order_acquire) > 0) {
+            return;
+        }
         return close();
     }
 

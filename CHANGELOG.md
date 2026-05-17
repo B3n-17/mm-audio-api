@@ -10,8 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - [custom soundfonts] Out-of-bounds read when deep-copying custom envelopes terminated by `ADSR_GOTO` / `ADSR_RESTART`
 - [polyphony] Audio-thread stack corruption when `numNotes > 88` (`noteIndices` array sized to support full 255-note range)
 - [no effect] AudioApi_SetSequenceFlags uninitialized data
+- [enemy bgm] `AudioApi_SetSequenceFlags` queue drain read `cmd->asUbyte` (high byte on MIPS BE) after the staged-uintptr push wrote the flag to the low byte, so flags set during QUEUEING decoded as 0 — including `SEQ_FLAG_ENEMY` for vanilla BGM seqIds replaced by streaming mods, causing the enemy battle sub-BGM to never start while main BGM was active
 - [mem-leak] `CacheStrategy::Default` never resolved to `PreloadOnUse` on `Audiofile`/`Generic`/`SampleBank`
 - [decoder] TOCTOU use-after-free between audio thread `decode()` and GC worker `close()` after stream idle
+- [audiofile] GC worker could `close()` an `Audiofile` while the audio thread was mid-`getChunk()` between `open()` and `decoder->decode()`, surfacing as transient "Decoder error: not open" decode failures / audible glitches; GC now skips `close()` while a chunk fetch is in flight
 - [vfs] `ZipFile::close` wrote `curPos` outside `mutex` on the uncompressed path, racing with locked `read`/`seek`/`tell`; now locks unconditionally
 - [vfs] `ZipArchive` accepted short reads silently because `stream.fail() && stream.eof()` are both set on truncation, bypassing the `!eof()` guard
 - [mem-leak] `AudioApi_Replace{SoundFont,Drum,SoundEffect,Instrument}` and the init->load queue forwarder ignored `RecompQueue_PushIfNotQueued`'s return value, leaking the deep-copied payload

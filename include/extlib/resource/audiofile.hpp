@@ -40,6 +40,7 @@ private:
 
     size_t numChunks = 0;
     std::atomic<size_t> pos = 0;
+    std::atomic<int> inFlight = 0;
     std::atomic<std::chrono::steady_clock::time_point> atime{EPOCH};
 
     CacheStrategy cacheStrategy;

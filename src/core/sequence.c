@@ -303,7 +303,10 @@ void AudioApi_SequenceQueueDrain(RecompQueueCmd* cmd) {
         AudioApi_ReplaceSequenceFont(cmd->arg0, cmd->arg1, cmd->asInt);
         break;
     case AUDIOAPI_CMD_OP_SET_SEQUENCE_FLAGS:
-        AudioApi_SetSequenceFlags(cmd->arg0, cmd->asUbyte);
+        // SetSequenceFlags push stores flags via `uintptr_t staged = flags`, which zero-extends
+        // into the low bits of the union. `asUbyte` reads the high byte on big-endian MIPS and
+        // returns 0, so read the full word and mask. (Regressed in e25bbee.)
+        AudioApi_SetSequenceFlags(cmd->arg0, (u8)(cmd->asUInt & 0xFF));
         break;
     default:
         break;
