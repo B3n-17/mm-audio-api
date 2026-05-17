@@ -181,8 +181,10 @@ RECOMP_EXPORT void AudioApi_ReplaceSoundFont(s32 fontId, AudioTableEntry* entry)
             return;
         }
         *copy = *entry;
-        RecompQueue_PushIfNotQueued(soundFontInitQueue, AUDIOAPI_CMD_OP_REPLACE_SOUNDFONT,
-                                    fontId, 0, (void**)&copy);
+        if (!RecompQueue_PushIfNotQueued(soundFontInitQueue, AUDIOAPI_CMD_OP_REPLACE_SOUNDFONT,
+                                         fontId, 0, (void**)&copy)) {
+            recomp_free(copy);
+        }
         return;
     }
     if (fontId >= gAudioCtx.soundFontTable->header.numEntries) {
@@ -634,8 +636,10 @@ RECOMP_EXPORT void AudioApi_ReplaceDrum(s32 fontId, s32 drumId, Drum* drum) {
     if (!copy) return;
 
     if (gAudioApiInitPhase == AUDIOAPI_INIT_QUEUEING) {
-        RecompQueue_PushIfNotQueued(soundFontInitQueue, AUDIOAPI_CMD_OP_REPLACE_DRUM,
-                                    fontId, drumId, (void**)&copy);
+        if (!RecompQueue_PushIfNotQueued(soundFontInitQueue, AUDIOAPI_CMD_OP_REPLACE_DRUM,
+                                         fontId, drumId, (void**)&copy)) {
+            AudioApi_FreeDrum(copy);
+        }
         return;
     }
 
@@ -658,8 +662,10 @@ RECOMP_EXPORT void AudioApi_ReplaceDrum(s32 fontId, s32 drumId, Drum* drum) {
             }
         }
     } else {
-        RecompQueue_PushIfNotQueued(soundFontLoadQueue, AUDIOAPI_CMD_OP_REPLACE_DRUM,
-                                    fontId, drumId, (void**)&copy);
+        if (!RecompQueue_PushIfNotQueued(soundFontLoadQueue, AUDIOAPI_CMD_OP_REPLACE_DRUM,
+                                         fontId, drumId, (void**)&copy)) {
+            AudioApi_FreeDrum(copy);
+        }
     }
 }
 
@@ -680,8 +686,10 @@ RECOMP_EXPORT void AudioApi_ReplaceSoundEffect(s32 fontId, s32 sfxId, SoundEffec
     if (!copy) return;
 
     if (gAudioApiInitPhase == AUDIOAPI_INIT_QUEUEING) {
-        RecompQueue_PushIfNotQueued(soundFontInitQueue, AUDIOAPI_CMD_OP_REPLACE_SOUNDEFFECT,
-                                    fontId, sfxId, (void**)&copy);
+        if (!RecompQueue_PushIfNotQueued(soundFontInitQueue, AUDIOAPI_CMD_OP_REPLACE_SOUNDEFFECT,
+                                         fontId, sfxId, (void**)&copy)) {
+            AudioApi_FreeSoundEffect(copy);
+        }
         return;
     }
 
@@ -704,8 +712,10 @@ RECOMP_EXPORT void AudioApi_ReplaceSoundEffect(s32 fontId, s32 sfxId, SoundEffec
             }
         }
     } else {
-        RecompQueue_PushIfNotQueued(soundFontLoadQueue, AUDIOAPI_CMD_OP_REPLACE_SOUNDEFFECT,
-                                    fontId, sfxId, (void**)&copy);
+        if (!RecompQueue_PushIfNotQueued(soundFontLoadQueue, AUDIOAPI_CMD_OP_REPLACE_SOUNDEFFECT,
+                                         fontId, sfxId, (void**)&copy)) {
+            AudioApi_FreeSoundEffect(copy);
+        }
     }
 }
 
@@ -727,8 +737,10 @@ RECOMP_EXPORT void AudioApi_ReplaceInstrument(s32 fontId, s32 instId, Instrument
 
     if (gAudioApiInitPhase == AUDIOAPI_INIT_QUEUEING) {
         recomp_printf("[ReplaceInst] QUEUEING -> soundFontInitQueue font=%d inst=%d\n", fontId, instId);
-        RecompQueue_PushIfNotQueued(soundFontInitQueue, AUDIOAPI_CMD_OP_REPLACE_INSTRUMENT,
-                                    fontId, instId, (void**)&copy);
+        if (!RecompQueue_PushIfNotQueued(soundFontInitQueue, AUDIOAPI_CMD_OP_REPLACE_INSTRUMENT,
+                                         fontId, instId, (void**)&copy)) {
+            AudioApi_FreeInstrument(copy);
+        }
         return;
     }
 
@@ -762,8 +774,10 @@ RECOMP_EXPORT void AudioApi_ReplaceInstrument(s32 fontId, s32 instId, Instrument
         }
     } else {
         recomp_printf("[ReplaceInst] deferred to soundFontLoadQueue\n");
-        RecompQueue_PushIfNotQueued(soundFontLoadQueue, AUDIOAPI_CMD_OP_REPLACE_INSTRUMENT,
-                                    fontId, instId, (void**)&copy);
+        if (!RecompQueue_PushIfNotQueued(soundFontLoadQueue, AUDIOAPI_CMD_OP_REPLACE_INSTRUMENT,
+                                         fontId, instId, (void**)&copy)) {
+            AudioApi_FreeInstrument(copy);
+        }
     }
 }
 
@@ -801,17 +815,26 @@ void AudioApi_SoundFontQueueDrain(RecompQueueCmd* cmd) {
             break;
         }
     } else {
-        // Otherwise we need to move it to load queue to apply once the font is loaded
-        switch (cmd->op) {
-        case AUDIOAPI_CMD_OP_SET_SAMPLEBANK:
-        case AUDIOAPI_CMD_OP_ADD_DRUM:
-        case AUDIOAPI_CMD_OP_REPLACE_DRUM:
-        case AUDIOAPI_CMD_OP_ADD_SOUNDEFFECT:
-        case AUDIOAPI_CMD_OP_REPLACE_SOUNDEFFECT:
-        case AUDIOAPI_CMD_OP_ADD_INSTRUMENT:
-        case AUDIOAPI_CMD_OP_REPLACE_INSTRUMENT:
-            RecompQueue_PushIfNotQueued(soundFontLoadQueue, cmd->op, cmd->arg0, cmd->arg1, &cmd->data);
-            break;
+        // Otherwise we need to move it to load queue to apply once the font is loaded.
+        // If the load queue already has a matching entry, free the deep-copied payload
+        // we were forwarding to avoid leaking it (SET_SAMPLEBANK carries a value, not a ptr).
+        bool forwarded = RecompQueue_PushIfNotQueued(soundFontLoadQueue, cmd->op, cmd->arg0,
+                                                     cmd->arg1, &cmd->data);
+        if (!forwarded) {
+            switch (cmd->op) {
+            case AUDIOAPI_CMD_OP_ADD_DRUM:
+            case AUDIOAPI_CMD_OP_REPLACE_DRUM:
+                AudioApi_FreeDrum(cmd->asPtr);
+                break;
+            case AUDIOAPI_CMD_OP_ADD_SOUNDEFFECT:
+            case AUDIOAPI_CMD_OP_REPLACE_SOUNDEFFECT:
+                AudioApi_FreeSoundEffect(cmd->asPtr);
+                break;
+            case AUDIOAPI_CMD_OP_ADD_INSTRUMENT:
+            case AUDIOAPI_CMD_OP_REPLACE_INSTRUMENT:
+                AudioApi_FreeInstrument(cmd->asPtr);
+                break;
+            }
         }
     }
 }

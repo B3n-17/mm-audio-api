@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - [decoder] TOCTOU use-after-free between audio thread `decode()` and GC worker `close()` after stream idle
 - [vfs] `ZipFile::close` wrote `curPos` outside `mutex` on the uncompressed path, racing with locked `read`/`seek`/`tell`; now locks unconditionally
 - [vfs] `ZipArchive` accepted short reads silently because `stream.fail() && stream.eof()` are both set on truncation, bypassing the `!eof()` guard
+- [mem-leak] `AudioApi_Replace{SoundFont,Drum,SoundEffect,Instrument}` and the init->load queue forwarder ignored `RecompQueue_PushIfNotQueued`'s return value, leaking the deep-copied payload
 - [mem-leak] `ZipArchive` leaked `mz_zip_archive` on init failure and never called `mz_zip_reader_end` (no destructor)
 - [debug menu] crash safe-guards
 - [vadpcm encode] Out-of-bounds read in loop-predictor pass when `loopStart` exceeds padded sample length
