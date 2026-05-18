@@ -59,8 +59,8 @@ u32 refcounter_get(void* ptr) {
 
 /* Byte-by-byte memory compare. Returns 0 if equal, else difference of first mismatched byte. */
 int Utils_MemCmp(const void *a, const void *b, size_t size) {
-    const char *c = a;
-    const char *d = b;
+    const unsigned char *c = a;
+    const unsigned char *d = b;
 
     for (size_t i = 0; i < size; ++i) {
         if (*c != *d) {
@@ -97,7 +97,7 @@ void print_bytes(void* ptr, int size) {
     int i;
     for (i = 0; i < size; i++) {
         if (i % 16 == 0) {
-            recomp_printf("%08x: ", &ptr[i]);
+            recomp_printf("%08x: ", &p[i]);
         }
         recomp_printf("%02X", p[i]);
         if (i % 16 == 15) {

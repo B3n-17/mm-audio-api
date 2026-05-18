@@ -20,6 +20,10 @@ void resizeDynDataArr(DynamicDataArray *dArr, size_t newCapacity) {
     if (newCapacity > 0) {
         size_t newByteSize = newCapacity * dArr->elementSize;
         u32 *newData = recomp_alloc(newByteSize);
+        if (newData == NULL) {
+            recomp_printf("[AudioAPI] resizeDynDataArr: recomp_alloc(%zu) failed; array unchanged\n", newByteSize);
+            return;
+        }
         Lib_MemSet(newData, 0, newByteSize);
 
         size_t min = dArr->count;

@@ -6,9 +6,15 @@
     \brief Functions for programatically building sequence files
  */
 
+#ifndef MML_VERSION_OOT
 #define MML_VERSION_OOT  0
+#endif
+#ifndef MML_VERSION_MM
 #define MML_VERSION_MM   1
+#endif
+#ifndef MML_VERSION
 #define MML_VERSION      MML_VERSION_MM
+#endif
 
 #include "audio/aseq.h"
 
