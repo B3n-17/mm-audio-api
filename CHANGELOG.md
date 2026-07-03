@@ -5,7 +5,9 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.8.5] - 2026-05-16 - Unreleased
+## Unreleased
+
+## [0.8.5] - 2026-07-03
 ### Fixed
 - [custom soundfonts] Out-of-bounds read when deep-copying custom envelopes terminated by `ADSR_GOTO` / `ADSR_RESTART`
 - [polyphony] Audio-thread stack corruption when `numNotes > 88` (`noteIndices` array sized to support full 255-note range)
@@ -24,8 +26,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `AudioApi_PlayFanfare` / async `PLAY_SEQUENCE` dereferenced `AudioThread_GetFontsForSequence` without bounds- or NULL-checking seqId
 - [metadata] `Metadata::parseId3v2` misaligned 2-byte read (UB; SIGBUS on strict-alignment ARM).
 - `Filesystem::isPathAllowed` / `openFile` rejected legitimate filenames containing `..`, accepted absolute `pathStr` that bypassed `baseDir`, and ignored symlinks
-
-
 
 ## [0.8.4] - 2026-03-21
 ### Added

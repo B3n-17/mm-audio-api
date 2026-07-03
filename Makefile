@@ -65,6 +65,7 @@ $(C_OBJS): $(BUILD_DIR)/%.o : %.c | $(BUILD_DIRS)
 
 extlib-%:
 	cmake -S . -B $(BUILD_DIR)/extlib/$* -G Ninja -DCMAKE_BUILD_TYPE=Release \
+	      -DCMAKE_LINK_DEPENDS_USE_LINKER=FALSE \
 	      --toolchain=cmake/zig-toolchain-$*.cmake
 	cmake --build $(BUILD_DIR)/extlib/$* --parallel
 	cmake --install $(BUILD_DIR)/extlib/$* --prefix $(BUILD_DIR) --component extlib
