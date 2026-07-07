@@ -993,9 +993,11 @@ RECOMP_PATCH void AudioLoad_RelocateFont(s32 fontId, void* fontDataStartAddr, Sa
  * Sets sample->isRelocated=true to prevent double-relocation.
  */
 RECOMP_PATCH void AudioLoad_RelocateSample(TunedSample* tunedSample, void* fontData, SampleBankRelocInfo* sampleBankReloc) {
-    // Skip if the sample pointer is already a RAM address. Mirrors the vanilla outer guard
-    // (mm-decomp load.c:1786, `sample <= AUDIO_RELOCATED_ADDRESS_START`)
-    if (IS_KSEG0(tunedSample->sample)) {
+    // Skip only if the sample's data pointer is already a RAM address (stale isRelocated=0
+    // on an already-relocated sample). A KSEG0 struct pointer alone is not enough to skip:
+    // custom fonts are born in RAM but their sampleAddr may still be a bank-relative offset
+    // (or DMA-callback dev addr) that needs relocation below.
+    if (IS_KSEG0(tunedSample->sample) && IS_KSEG0(tunedSample->sample->sampleAddr)) {
         return;
     }
 
