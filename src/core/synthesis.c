@@ -5,6 +5,7 @@
 #include <core/heap.h>
 #include <core/init.h>
 #include <core/load.h>
+#include <core/soundfont.h>
 
 /**
  * @file synthesis.c
@@ -471,8 +472,10 @@ RECOMP_PATCH Acmd* AudioSynth_ProcessSample(s32 noteIndex, NoteSampleState* samp
             if ((sample->codec == CODEC_ADPCM) || (sample->codec == CODEC_SMALL_ADPCM)) {
                 if (gAudioCtx.adpcmCodeBook != sample->book->codeBook) {
                     s16* codeBook;
-                    u32 numEntries = SAMPLES_PER_FRAME * sample->book->header.order *
-                        sample->book->header.numPredictors;
+                    // Sized by the ucode's fixed order-2 layout, not header.order (which can
+                    // lie — see BOOK_CODEBOOK_NUM_ENTRIES): identical for honest books, and
+                    // stops the RspCacheMemcpy below over-reading past lying-header books.
+                    u32 numEntries = BOOK_CODEBOOK_NUM_ENTRIES(sample->book);
 
                     if (bookOffset == 1) {
                         gAudioCtx.adpcmCodeBook = &gInvalidAdpcmCodeBook[1];

@@ -12,6 +12,14 @@ typedef enum SoundFontType : u8 {
     SOUNDFONT_CUSTOM,
 } SoundFontType;
 
+// Number of s16 codebook entries actually present for a book. The RSP ucode
+// (and the native voice mirror) decode every book with the fixed order-2 page
+// layout, so header.order does not describe the data — banks in the wild ship
+// lying order fields (e.g. an order=4 header over order-2 data). Sizing reads
+// or copies by header.order over-reads past the real coefficients (and
+// potentially past the containing allocation).
+#define BOOK_CODEBOOK_NUM_ENTRIES(book) (SAMPLES_PER_FRAME * 2 * (book)->header.numPredictors)
+
 typedef struct CustomSoundFont {
     SoundFontType type;
     u16 sampleBank1;

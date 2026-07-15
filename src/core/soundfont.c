@@ -158,11 +158,16 @@ RECOMP_EXPORT s32 AudioApi_AddSoundFont(AudioTableEntry* entry) {
     gAudioCtx.soundFontTable->header.numEntries++;
     gAudioCtx.soundFontTable->entries[newFontId] = *entry;
 
+    // Pack metadata into the TABLE copy: AudioLoad_InitSoundFont derives
+    // soundFontList[].sampleBankId1/2 and counts from it. (Writing to the
+    // caller's entry after the copy left the table's shortData zeroed, so
+    // custom fonts always resolved sample bank 0 regardless of declaration.)
     CustomSoundFont* soundFont = (CustomSoundFont*)entry->romAddr;
     if (IS_KSEG0(entry->romAddr) && soundFont->type == SOUNDFONT_CUSTOM) {
-        entry->shortData1 = (soundFont->sampleBank1 << 8) | soundFont->sampleBank2;
-        entry->shortData2 = (soundFont->numInstruments << 8) | soundFont->numDrums;
-        entry->shortData3 = soundFont->numSfx;
+        AudioTableEntry* tableEntry = &gAudioCtx.soundFontTable->entries[newFontId];
+        tableEntry->shortData1 = (soundFont->sampleBank1 << 8) | soundFont->sampleBank2;
+        tableEntry->shortData2 = (soundFont->numInstruments << 8) | soundFont->numDrums;
+        tableEntry->shortData3 = soundFont->numSfx;
     }
 
     AudioLoad_InitSoundFont(newFontId);
@@ -193,11 +198,13 @@ RECOMP_EXPORT void AudioApi_ReplaceSoundFont(s32 fontId, AudioTableEntry* entry)
 
     gAudioCtx.soundFontTable->entries[fontId] = *entry;
 
+    // Same table-copy packing as AudioApi_AddSoundFont (see the note there).
     CustomSoundFont* soundFont = (CustomSoundFont*)entry->romAddr;
     if (IS_KSEG0(entry->romAddr) && soundFont->type == SOUNDFONT_CUSTOM) {
-        entry->shortData1 = (soundFont->sampleBank1 << 8) | soundFont->sampleBank2;
-        entry->shortData2 = (soundFont->numInstruments << 8) | soundFont->numDrums;
-        entry->shortData3 = soundFont->numSfx;
+        AudioTableEntry* tableEntry = &gAudioCtx.soundFontTable->entries[fontId];
+        tableEntry->shortData1 = (soundFont->sampleBank1 << 8) | soundFont->sampleBank2;
+        tableEntry->shortData2 = (soundFont->numInstruments << 8) | soundFont->numDrums;
+        tableEntry->shortData3 = soundFont->numSfx;
     }
 
     AudioLoad_InitSoundFont(fontId);
@@ -998,6 +1005,16 @@ RECOMP_PATCH void AudioLoad_RelocateSample(TunedSample* tunedSample, void* fontD
     // custom fonts are born in RAM but their sampleAddr may still be a bank-relative offset
     // (or DMA-callback dev addr) that needs relocation below.
     if (IS_KSEG0(tunedSample->sample) && IS_KSEG0(tunedSample->sample->sampleAddr)) {
+        Sample* sample = tunedSample->sample;
+        if (!sample->isRelocated) {
+            // Sample data pre-patched to a RAM pointer before import (raw medium/isRelocated
+            // still carry the bank binary's values). Don't remap medium against the sample
+            // bank; finalize like AudioApi_CopySample: force CART so playback takes the DMA
+            // path — the Acmd MEDIUM_RAM direct-read can't touch mod memory.
+            sample->medium = MEDIUM_CART;
+            sample->unk_bit26 = false;
+            sample->isRelocated = true;
+        }
         return;
     }
 
@@ -1015,8 +1032,7 @@ RECOMP_PATCH void AudioLoad_RelocateSample(TunedSample* tunedSample, void* fontD
             AudioApi_RspCacheInvalidateAddr(loop->predictorState, sizeof(loop->predictorState));
         }
         if (book != NULL) {
-            u32 numEntries = SAMPLES_PER_FRAME * book->header.order * book->header.numPredictors;
-            AudioApi_RspCacheInvalidateAddr(book->codeBook, sizeof(s16) * numEntries);
+            AudioApi_RspCacheInvalidateAddr(book->codeBook, sizeof(s16) * BOOK_CODEBOOK_NUM_ENTRIES(book));
         }
 
         sample->loop = loop;
@@ -1315,9 +1331,7 @@ Fnv32_t AudioApi_HashSample(Sample* sample) {
     }
 
     if (sample->book) {
-        s32 order = sample->book->header.order;
-        s32 numPredictors = sample->book->header.numPredictors;
-        size_t bookSize = sizeof(AdpcmBookHeader) + sizeof(s16) * 8 * order * numPredictors;
+        size_t bookSize = sizeof(AdpcmBookHeader) + sizeof(s16) * BOOK_CODEBOOK_NUM_ENTRIES(sample->book);
         hval = fnv_32a_buf(sample->book, bookSize, hval);
     }
 
@@ -1373,9 +1387,7 @@ Sample* AudioApi_CopySample(Sample* src) {
     }
 
     if (src->book) {
-        s32 order = src->book->header.order;
-        s32 numPredictors = src->book->header.numPredictors;
-        size_t bookSize = sizeof(AdpcmBookHeader) + sizeof(s16) * 8 * order * numPredictors;
+        size_t bookSize = sizeof(AdpcmBookHeader) + sizeof(s16) * BOOK_CODEBOOK_NUM_ENTRIES(src->book);
 
         copy->book = recomp_alloc(bookSize);
         if (!copy->book) {
