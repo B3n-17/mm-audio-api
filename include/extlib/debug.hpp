@@ -96,6 +96,11 @@ void setSeqPlayerPacked(uint32_t playerIndex, int32_t seqId, const int32_t* pack
 // DJ mixer overrides — set by the debug UI, consumed by the audio thread.
 // setMixerOpen(false) also clears all active overrides.
 void setMixerOpen(bool open);
+
+// Soundfont-info push (Sample Patcher feed) — toggled from the debug UI,
+// polled game-side to skip the font-table walk entirely when disabled.
+void setFontPushEnabled(bool enabled);
+bool isFontPushEnabled();
 bool isMixerOpen();
 void setMixOverride(uint32_t playerIndex, uint32_t channelIndex, int32_t pan, int32_t volMilli, int32_t reverb, bool muted);
 void clearMixOverride(uint32_t playerIndex, uint32_t channelIndex);

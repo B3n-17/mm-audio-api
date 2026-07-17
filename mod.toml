@@ -8,7 +8,7 @@
 id = "magemods_audio_api"
 
 # Version of this mod.
-version = "0.8.6"
+version = "0.8.7"
 
 # The name that will show up for this mod in the mod menu. This should be human readable.
 display_name = "Audio API"
@@ -62,6 +62,7 @@ native_libraries = [
         "AudioApiNative_DebugQuerySamplePatch",
         "AudioApiNative_DebugTakeSamplePatch",
         "AudioApiNative_DebugPushSoundFontInfos",
+        "AudioApiNative_DebugGetFontPushEnabled",
     ] }
 ]
 

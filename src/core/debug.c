@@ -53,15 +53,22 @@ RECOMP_IMPORT(".", bool AudioApiNative_DebugTakeSamplePatch(s16* bookCoeffs, u8*
 //     [3 .. 3+numInstruments-1] per-instrument region bitmask:
 //           bit 0 = has lo sample, bit 1 = has mid sample, bit 2 = has hi sample
 RECOMP_IMPORT(".", bool AudioApiNative_DebugPushSoundFontInfos(s32* arr, u32 totalInts));
+RECOMP_IMPORT(".", u32 AudioApiNative_DebugGetFontPushEnabled(void));
 
 // ============================================================
-// Font info push (throttled)
+// Font info push (on change)
 // ============================================================
 
-#define FONT_INFO_PUSH_INTERVAL 60  // push every ~1 sec at 60fps
 #define AUDIOAPI_DEBUG_TUNING_SCALE 1000000.0f
 
-static u32 sFontInfoPushCounter = 0;
+// The full font-table walk runs on the audio thread; pushing it on a fixed
+// 1s timer caused a periodic underrun click on large font tables. The push is
+// off by default (enabled from the Sample Patcher UI) and fires only when the
+// data could have changed: first push, font count or a player's default font
+// changing, or a sample patch applied from the debug UI.
+static bool sFontInfoDirty = true;
+static u32 sFontInfoPrevNumFonts = 0;
+static u8 sFontInfoPrevDefaultFonts[SEQ_PLAYER_MAX];
 
 static s32 AudioApi_DebugEncodeTuning(f32 tuning) {
     if (tuning >= 0.0f) {
@@ -230,14 +237,28 @@ static void AudioApi_DebugPushFontInfos(void) {
         return;
     }
 
-    sFontInfoPushCounter++;
-    if (sFontInfoPushCounter < FONT_INFO_PUSH_INTERVAL) {
+    if (!AudioApiNative_DebugGetFontPushEnabled()) {
         return;
     }
-    sFontInfoPushCounter = 0;
 
     numFonts = gAudioCtx.soundFontTable->header.numEntries;
     numPlayers = SEQ_PLAYER_MAX;
+
+    if (numFonts != sFontInfoPrevNumFonts) {
+        sFontInfoDirty = true;
+        sFontInfoPrevNumFonts = numFonts;
+    }
+    for (i = 0; i < numPlayers; i++) {
+        if (gAudioCtx.seqPlayers[i].defaultFont != sFontInfoPrevDefaultFonts[i]) {
+            sFontInfoDirty = true;
+            sFontInfoPrevDefaultFonts[i] = gAudioCtx.seqPlayers[i].defaultFont;
+        }
+    }
+
+    if (!sFontInfoDirty) {
+        return;
+    }
+    sFontInfoDirty = false;
 
     // Header: 1 (numPlayers) + numPlayers + 1 (numFonts).
     // Per font: 3 + numInst * 4 (mask + lo/mid/hi tuning) + numDrums + numSfx.
@@ -392,6 +413,9 @@ static void AudioApi_DebugApplySamplePatch(void) {
         recomp_free(adpcmData);
         return;
     }
+
+    // Patched tunings must reach the patcher UI's post-apply refresh.
+    sFontInfoDirty = true;
 
     book = NULL;
     if (hdr.codec == CODEC_ADPCM) {

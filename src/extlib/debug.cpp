@@ -72,6 +72,11 @@ std::array<std::array<Debug::MixOverride, MAX_MIX_CHANNELS>, Debug::MAX_PLAYERS>
 std::mutex sMixMutex;
 std::atomic<bool> sMixerOpen = false;
 
+// Font-info push (Sample Patcher feed): off by default — the game-side
+// soundfont-table walk/push runs on the audio thread, so it only runs while
+// explicitly enabled from the patcher UI.
+std::atomic<bool> sFontPushEnabled = false;
+
 // ============================================================
 // VADPCM (N64 ADPCM) Encoder
 // Ported from mm-decomp/tools/audio/sampleconv (CC0-1.0, ZeldaRET).
@@ -1427,6 +1432,18 @@ void handleClient(SocketHandle client) {
         return;
     }
 
+    // Handle POST /font-push — enable/disable the game-side soundfont-info push.
+    // Body: {"enabled":1} or {"enabled":0}.
+    if (line.rfind("POST /font-push", 0) == 0) {
+        size_t bodyStart = request.find("\r\n\r\n");
+        std::string body = bodyStart != std::string::npos ? request.substr(bodyStart + 4) : "";
+        int32_t enabled = jsonInt(body, "enabled", 0);
+        Debug::setFontPushEnabled(enabled != 0);
+        sendHttp(client, "200 OK", "application/json; charset=utf-8",
+                 std::string("{\"enabled\":") + (enabled != 0 ? "1" : "0") + "}");
+        return;
+    }
+
     // Handle POST /mix
     if (line.rfind("POST /mix", 0) == 0) {
         // Find body after \r\n\r\n
@@ -1560,6 +1577,12 @@ void handleClient(SocketHandle client) {
 
     if (path == "/soundfonts") {
         sendHttp(client, "200 OK", "application/json; charset=utf-8", soundfontsJson());
+        return;
+    }
+
+    if (path == "/font-push") {
+        sendHttp(client, "200 OK", "application/json; charset=utf-8",
+                 std::string("{\"enabled\":") + (Debug::isFontPushEnabled() ? "1" : "0") + "}");
         return;
     }
 
@@ -2097,6 +2120,14 @@ void setMixerOpen(bool open) {
 
 bool isMixerOpen() {
     return sMixerOpen.load(std::memory_order_acquire);
+}
+
+void setFontPushEnabled(bool enabled) {
+    sFontPushEnabled.store(enabled, std::memory_order_release);
+}
+
+bool isFontPushEnabled() {
+    return sFontPushEnabled.load(std::memory_order_acquire);
 }
 
 void setMixOverride(uint32_t playerIndex, uint32_t channelIndex, int32_t pan, int32_t volMilli, int32_t reverb, bool muted) {

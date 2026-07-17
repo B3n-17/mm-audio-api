@@ -151,6 +151,10 @@ RECOMP_DLL_FUNC(AudioApiNative_DebugRegisterTag) {
     RECOMP_RETURN(bool, true);
 }
 
+RECOMP_DLL_FUNC(AudioApiNative_DebugGetFontPushEnabled) {
+    RECOMP_RETURN(uint32_t, (Debug::isEnabled() && Debug::isFontPushEnabled()) ? 1u : 0u);
+}
+
 RECOMP_DLL_FUNC(AudioApiNative_DebugGetMixOverride) {
     if (!Debug::isEnabled() || !Debug::isMixerOpen()) {
         RECOMP_RETURN(bool, false);

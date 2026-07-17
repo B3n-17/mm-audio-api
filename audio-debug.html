@@ -1193,6 +1193,10 @@
             <h2>Sample Patcher</h2>
             <p>Replace a soundfont instrument, drum, or SFX sample at runtime. Drop a WAV file to encode and hot-swap it.</p>
           </div>
+          <label style="font-size:12px;color:var(--muted);font-family:var(--mono);display:flex;align-items:center;gap:8px;white-space:nowrap;" title="Sync soundfont info from the game (runs on the audio thread; enable only while patching)">
+            <input id="patcherFontPush" type="checkbox" />
+            <span>Sync font info</span>
+          </label>
           <div class="chip"><span>API</span><strong>POST /soundfont-patch-sample</strong></div>
         </div>
         <div class="panel-body" style="display:flex;flex-direction:column;gap:18px;">
@@ -2917,6 +2921,19 @@
       filterEl?.addEventListener('input', patcherUpdateFontInfo);
       reloadBtn?.addEventListener('click', () => patcherRefreshFonts());
       onlyRelevantEl?.addEventListener('change', () => patcherRefreshFonts());
+
+      const fontPushEl = document.getElementById('patcherFontPush');
+      fontPushEl?.addEventListener('change', (e) => {
+        fetch(API_BASE + '/font-push', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enabled: e.target.checked ? 1 : 0 }),
+        }).catch(() => {});
+        // Re-enabling triggers a fresh game-side push; pick it up shortly after.
+        if (e.target.checked) setTimeout(patcherRefreshFonts, 1100);
+      });
+      getJson(API_BASE + '/font-push').then(d => {
+        if (fontPushEl) fontPushEl.checked = !!(d && d.enabled);
+      }).catch(() => {});
       document.getElementById('patcherSlotId')?.addEventListener('input', patcherUpdateFontInfo);
 
       patcherUpdateSlotLabel();
