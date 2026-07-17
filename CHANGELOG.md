@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## [0.8.7] - 2026-07-16
+### Fixed
+- [custom soundfonts] `AudioLoad_RelocateSample`'s 0.8.5 KSEG0 guard skipped `sampleAddr`/`medium` relocation for imported custom fonts entirely, breaking all custom-bank audio (heavy distortion); the guard now requires a KSEG0 `sampleAddr` too, and finalizes pre-patched RAM-pointer samples (`medium=CART`, `isRelocated=true`) so mod-memory sample data takes the DMA path the RSP can read
+- [custom soundfonts] Codebook reads/copies were sized by `AdpcmBook.header.order`, which lies in the wild (e.g. MMRS zbanks shipping `order=4` headers over order-2 data — harmless on hardware because the RSP ucode is hard-wired to the order-2 layout); sizing now follows the ucode's fixed order-2 layout (`BOOK_CODEBOOK_NUM_ENTRIES`), stopping over-reads past bank allocations in `AudioApi_CopySample`/`AudioApi_HashSample`/`aLoadADPCM`
+- [custom soundfonts] `AudioApi_AddSoundFont`/`AudioApi_ReplaceSoundFont` packed sampleBank/count metadata into the caller's entry after copying it into the font table, so `AudioLoad_InitSoundFont` always derived `sampleBankId1/2 = 0` and zero counts for custom fonts; the declared sample banks are now honored
+- [debug html] Sample Patcher is now opt-in due to performance hit when being enabled
+
 ## [0.8.5] - 2026-07-03
 ### Fixed
 - [custom soundfonts] Out-of-bounds read when deep-copying custom envelopes terminated by `ADSR_GOTO` / `ADSR_RESTART`
